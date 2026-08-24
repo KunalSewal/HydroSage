@@ -1,0 +1,29 @@
+# Local Claude Code project instructions — not part of the public repo
+CLAUDE.md
+
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+*.local
+
+# Private source documents (project description / HLD PDFs and similar)
+docs/private/
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.DS_Store
+Thumbs.db
+
+# Dependency and build artifacts
+node_modules/
+dist/
+build/
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
