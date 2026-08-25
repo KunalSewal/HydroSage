@@ -61,6 +61,19 @@ click (lat, lon)
 - Reverse-geocode or elevation fetch fails (OpenZenith unreachable, timeout, bad response): `SitePanel` shows an inline error for that specific stage with a "retry" button; the map marker stays so the user doesn't lose their selection.
 - `POST /villages` with `lat`/`lon` outside valid coordinate range: Pydantic validation returns 422 automatically. A geographically valid but unresolvable point (e.g. open ocean, no reverse-geocode match): reverse-geocode call returns no result, handler responds 422 with a distinct message; panel surfaces it as "couldn't identify a site here."
 
+## Visual design & animation
+
+The user asked explicitly for a premium look, not a functional-but-generic dashboard — this adds real dependencies, not just CSS tweaks:
+
+- **Styling:** Tailwind CSS (utility-first — faster to get a distinctive, custom look than fighting a component library's default appearance). Replaces the current bare `App.css`/`index.css` from the Vite template.
+- **Animation:** Framer Motion, for the staged reveals the flow already calls for — panel slide-in, marker drop with a bounce, elevation stats counting up rather than snapping in, and (the centerpiece) contour lines drawing themselves onto the map stroke-by-stroke as they arrive, rather than appearing all at once. This is where "every step visually displayed" (the user's words from the design discussion) becomes something that actually feels considered rather than just functional.
+- **Icons:** `lucide-react` — consistent, modern icon set instead of mixed/default glyphs.
+- **Typography:** a deliberate font pairing via Google Fonts, loaded once in `index.html` — a clean geometric sans for UI text and a slightly more distinctive display face for headings/stats, rather than the browser default.
+- **Basemap:** a clean, muted basemap tile layer (e.g. CARTO Positron) for the default/unselected map state, switching to the OpenZenith Sentinel-2 imagery layer once a site is selected — makes the "before" and "after" states visually distinct rather than the map looking the same throughout.
+- **Motion principles:** shared easing/duration tokens (not ad hoc per-component timings) so the whole app feels like one system; every async stage from the staged-feedback design gets a matching motion treatment, not just a text label change.
+
+This doesn't change the component boundaries or data flow already described above — it changes what those components are built with and how their state transitions look.
+
 ## Testing
 
 - Backend: unit test for the find-or-create proximity logic against a real PostGIS (following the existing pattern — real DB via Docker Compose, not mocked); an `integration`-marked test (skipped by default, same convention as `test_elevation_client.py`) exercising the real reverse-geocode call.
