@@ -1,7 +1,7 @@
 import 'leaflet/dist/leaflet.css'
 import L from 'leaflet'
 import { useEffect, useState } from 'react'
-import { MapContainer, Marker, Polyline, TileLayer, useMapEvents } from 'react-leaflet'
+import { MapContainer, Marker, Polyline, TileLayer, useMap, useMapEvents } from 'react-leaflet'
 import type { Contour } from '../api/client'
 
 // A fresh element per distinct position (see the `key` on <Marker> below)
@@ -63,6 +63,14 @@ function ContourLayer({ contours }: { contours: Contour[] }) {
   )
 }
 
+function RecenterOnChange({ position }: { position: { lat: number; lon: number } }) {
+  const map = useMap()
+  useEffect(() => {
+    map.flyTo([position.lat, position.lon], map.getZoom())
+  }, [position.lat, position.lon, map])
+  return null
+}
+
 export default function MapView({ center, markerPosition, contours, onMapClick }: MapViewProps) {
   return (
     <MapContainer center={[center.lat, center.lon]} zoom={12} className="h-full w-full">
@@ -71,6 +79,7 @@ export default function MapView({ center, markerPosition, contours, onMapClick }
         url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
       />
       <ClickHandler onMapClick={onMapClick} />
+      <RecenterOnChange position={markerPosition ?? center} />
       {markerPosition && (
         <Marker
           key={`${markerPosition.lat}-${markerPosition.lon}`}
