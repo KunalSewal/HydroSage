@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from app.api import catchment, jobs, rainfall, recommend, report, satellite, villages
+from app.api import catchment, geocode, jobs, rainfall, recommend, report, satellite, villages
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -18,6 +18,7 @@ app.include_router(catchment.router)
 app.include_router(recommend.router)
 app.include_router(jobs.router)
 app.include_router(report.router)
+app.include_router(geocode.router)
 
 
 @app.get("/health", tags=["health"])
