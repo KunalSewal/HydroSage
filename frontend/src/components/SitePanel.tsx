@@ -9,8 +9,13 @@ interface SitePanelProps {
   onRetry: () => void
 }
 
-// Counts up to `target` over `durationMs` instead of snapping straight to
-// the final number, per the spec's animation section.
+// Counts up to each of `targets` over `durationMs` instead of snapping
+// straight to the final numbers, per the spec's animation section. Takes an
+// array so multiple related numbers (here: min/max elevation) animate off a
+// single shared rAF loop and land in the same state update -- two separate
+// loops each computing their own progress could settle on different frames
+// a tick apart, which is invisible to the eye but flaky for tests that
+// assert on both numbers being final at once.
 //
 // `start` is derived from the timestamp of the *first* rAF callback rather
 // than a separately-captured `performance.now()`. In real browsers these two
@@ -20,8 +25,8 @@ interface SitePanelProps {
 // spurious offset that made the animation never converge within a test's
 // waitFor timeout. Deriving `start` from the callback's own clock keeps both
 // reads on the same timeline in every environment.
-function useCountUp(target: number, durationMs = 600): number {
-  const [value, setValue] = useState(0)
+function useCountUp(targets: number[], durationMs = 600): number[] {
+  const [values, setValues] = useState<number[]>(() => targets.map(() => 0))
 
   useEffect(() => {
     let frame: number
@@ -29,19 +34,24 @@ function useCountUp(target: number, durationMs = 600): number {
     function tick(now: number) {
       if (start === null) start = now
       const progress = Math.min((now - start) / durationMs, 1)
-      setValue(Math.round(target * progress))
+      setValues(targets.map((target) => Math.round(target * progress)))
       if (progress < 1) frame = requestAnimationFrame(tick)
     }
     frame = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(frame)
-  }, [target, durationMs])
+    // targets is a fresh array each render; spreading its values keeps the
+    // effect keyed on the actual numbers rather than array identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [durationMs, ...targets])
 
-  return value
+  return values
 }
 
 export default function SitePanel({ state, onAnalyze, onRetry }: SitePanelProps) {
-  const minElevation = useCountUp(state.elevation ? Math.round(state.elevation.min_elevation) : 0)
-  const maxElevation = useCountUp(state.elevation ? Math.round(state.elevation.max_elevation) : 0)
+  const [minElevation, maxElevation] = useCountUp([
+    state.elevation ? Math.round(state.elevation.min_elevation) : 0,
+    state.elevation ? Math.round(state.elevation.max_elevation) : 0,
+  ])
 
   return (
     <div className="flex h-full w-80 flex-col gap-4 bg-slate-900/90 p-6 text-slate-100 backdrop-blur">
