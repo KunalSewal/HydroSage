@@ -60,9 +60,14 @@ describe('SitePanel', () => {
     )
     // The numbers count up via requestAnimationFrame rather than snapping
     // in (see the spec's animation section), so this needs to wait for the
-    // animation to settle rather than assert synchronously.
-    await waitFor(() => expect(screen.getByText(/250/)).toBeInTheDocument(), { timeout: 1000 })
-    expect(screen.getByText(/300/)).toBeInTheDocument()
+    // animation to settle rather than assert synchronously. Each number is
+    // queried by its own data-testid and awaited individually -- min and max
+    // animate together, but max's climb passes through min's target value on
+    // its way to its own target, so a shared, unanchored text match (e.g.
+    // getByText(/250/) against the combined "Elevation Xm - Ym" string) can
+    // resolve on that transient value instead of min's genuine settled one.
+    await waitFor(() => expect(screen.getByTestId('min-elevation')).toHaveTextContent('250'), { timeout: 1000 })
+    await waitFor(() => expect(screen.getByTestId('max-elevation')).toHaveTextContent('300'), { timeout: 1000 })
   })
 
   it('shows the error message and a retry button on error', async () => {

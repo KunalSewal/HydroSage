@@ -127,7 +127,8 @@ export default function SitePanel({ state, onAnalyze, onRetry }: SitePanelProps)
                 >
                   <Mountain className="h-4 w-4 text-emerald-400" />
                   <span>
-                    Elevation {minElevation}m &ndash; {maxElevation}m
+                    Elevation <span data-testid="min-elevation">{minElevation}</span>m
+                    &ndash; <span data-testid="max-elevation">{maxElevation}</span>m
                   </span>
                 </motion.div>
               )}
