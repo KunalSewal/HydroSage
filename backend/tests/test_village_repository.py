@@ -14,12 +14,12 @@ from app.infrastructure.village_repository import create_village, find_nearby
 )
 def test_find_nearby_finds_a_village_within_radius(db_session):
     village = create_village(
-        db_session, lat=19.0679874, lon=74.6012297, name="Test Village",
-        state="Maharashtra", district="Ahmednagar (Ahilyanagar)",
+        db_session, lat=21.19, lon=81.30, name="Test Village",
+        state="Chhattisgarh", district="Durg",
     )
     db_session.flush()
 
-    found = find_nearby(db_session, lat=19.0689874, lon=74.6012297)  # ~111m away
+    found = find_nearby(db_session, lat=21.191, lon=81.30)  # ~111m away
 
     assert found is not None
     assert found.id == village.id
@@ -32,12 +32,12 @@ def test_find_nearby_finds_a_village_within_radius(db_session):
 )
 def test_find_nearby_returns_none_outside_radius(db_session):
     create_village(
-        db_session, lat=19.0679874, lon=74.6012297, name="Test Village 2",
-        state="Maharashtra", district="Ahmednagar (Ahilyanagar)",
+        db_session, lat=21.19, lon=81.30, name="Test Village 2",
+        state="Chhattisgarh", district="Durg",
     )
     db_session.flush()
 
-    found = find_nearby(db_session, lat=19.1179874, lon=74.6012297)  # ~5.5km away
+    found = find_nearby(db_session, lat=21.24, lon=81.30)  # ~5.5km away
 
     assert found is None
 
