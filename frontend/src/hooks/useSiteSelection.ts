@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { createVillage, getElevation, type ElevationData, type Village } from '../api/client'
 
 export type SiteStatus = 'idle' | 'locating' | 'located' | 'analyzing' | 'analyzed' | 'error'
@@ -21,13 +21,17 @@ const initialState: SiteSelectionState = {
 
 export function useSiteSelection() {
   const [state, setState] = useState<SiteSelectionState>(initialState)
+  const requestId = useRef(0)
 
   const selectPoint = useCallback(async (lat: number, lon: number) => {
+    const id = ++requestId.current
     setState((prev) => ({ ...prev, status: 'locating', errorMessage: null, lastPoint: { lat, lon } }))
     try {
       const village = await createVillage(lat, lon)
+      if (id !== requestId.current) return // superseded by a newer call -- discard
       setState((prev) => ({ ...prev, status: 'located', village, elevation: null }))
     } catch (error) {
+      if (id !== requestId.current) return
       setState((prev) => ({
         ...prev,
         status: 'error',
@@ -36,25 +40,25 @@ export function useSiteSelection() {
     }
   }, [])
 
-  const analyze = useCallback(async () => {
+  const analyze = useCallback(() => {
     setState((prev) => {
-      if (!prev.village) return prev
-      return { ...prev, status: 'analyzing', errorMessage: null }
-    })
-    setState((current) => {
-      if (current.status !== 'analyzing' || !current.village) return current
-      getElevation(current.village.id)
+      if (prev.status !== 'located' || !prev.village) return prev
+      const id = ++requestId.current
+      const village = prev.village
+      getElevation(village.id)
         .then((elevation) => {
-          setState((prev) => ({ ...prev, status: 'analyzed', elevation }))
+          if (id !== requestId.current) return
+          setState((current) => ({ ...current, status: 'analyzed', elevation }))
         })
         .catch((error: unknown) => {
-          setState((prev) => ({
-            ...prev,
+          if (id !== requestId.current) return
+          setState((current) => ({
+            ...current,
             status: 'error',
             errorMessage: error instanceof Error ? error.message : 'something went wrong',
           }))
         })
-      return current
+      return { ...prev, status: 'analyzing', errorMessage: null }
     })
   }, [])
 
