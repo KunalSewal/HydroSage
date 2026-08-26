@@ -4,6 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.infrastructure.db import get_db
+from app.infrastructure.village_repository import find_nearby
 from app.main import app
 
 
@@ -18,6 +19,8 @@ def test_post_villages_creates_a_village_from_coordinates(db_session):
 
     app.dependency_overrides[get_db] = override_get_db
     client = TestClient(app)
+
+    assert find_nearby(db_session, lat=21.1938, lon=81.3509) is None  # proves the create path runs, not find_nearby
 
     response = client.post("/villages", json={"lat": 21.1938, "lon": 81.3509})
 
