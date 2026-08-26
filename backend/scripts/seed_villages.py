@@ -11,6 +11,7 @@ from shapely.geometry import Point, box
 
 from app.infrastructure.db import SessionLocal
 from app.infrastructure.models import Village
+from app.infrastructure.village_repository import DEFAULT_HALF_EXTENT_DEG
 
 VILLAGES = [
     {
@@ -19,7 +20,6 @@ VILLAGES = [
         "district": "Ahmednagar (Ahilyanagar)",
         "lat": 19.0679874,
         "lon": 74.6012297,
-        "half_extent_deg": 0.03,  # ~3km — village + surrounding catchment
     },
 ]
 
@@ -34,7 +34,7 @@ def main() -> None:
                 continue
 
             centroid = Point(v["lon"], v["lat"])
-            e = v["half_extent_deg"]
+            e = DEFAULT_HALF_EXTENT_DEG
             bounds = box(v["lon"] - e, v["lat"] - e, v["lon"] + e, v["lat"] + e)
 
             village = Village(
