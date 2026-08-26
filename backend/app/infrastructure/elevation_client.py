@@ -4,12 +4,10 @@ Replaced OpenZenith after it proved unreliable mid-project — see
 docs/DECISIONS.md D-005 for the live verification data behind this switch.
 """
 
-import io
 from dataclasses import dataclass
 
 import httpx
 import numpy as np
-import rasterio
 from rasterio.io import MemoryFile
 
 from app.core.config import get_settings
