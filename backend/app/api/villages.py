@@ -12,8 +12,6 @@ from app.schemas.village import BoundingBoxOut, ElevationOut, VillageOut
 
 router = APIRouter(prefix="/villages", tags=["villages"])
 
-DEM_ZOOM = 13
-
 
 @router.get("", response_model=list[VillageOut])
 def list_villages(db: Session = Depends(get_db)):
@@ -48,7 +46,7 @@ def get_elevation(village_id: str, db: Session = Depends(get_db)):
 
     client = ElevationClient()
     try:
-        mosaic, covered = client.get_dem_for_bbox(bbox, zoom=DEM_ZOOM)
+        mosaic, covered = client.get_dem_for_bbox(bbox)
     finally:
         client.close()
 
