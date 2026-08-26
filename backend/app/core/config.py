@@ -21,6 +21,12 @@ class Settings(BaseSettings):
 
     elevation_api_base_url: str = "https://openzenith.cyopsys.com/api/elevation"
 
+    opentopography_api_key: str = ""
+    opentopography_base_url: str = "https://portal.opentopography.org/API"
+
+    nominatim_base_url: str = "https://nominatim.openstreetmap.org"
+    nominatim_user_agent: str = "HydroSage/0.1 (student project, IIT Bhilai)"
+
 
 @lru_cache
 def get_settings() -> Settings:

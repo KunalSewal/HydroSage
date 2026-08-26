@@ -21,6 +21,7 @@ dependencies = [
     "numpy>=2.0",
     "scikit-image>=0.24",
     "pysheds>=0.4",
+    "pillow>=10.4",
 ]
 
 [project.optional-dependencies]
@@ -44,3 +45,4 @@ target-version = "py312"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["integration: hits a live external API, skipped by default"]
