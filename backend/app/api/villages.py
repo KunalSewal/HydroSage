@@ -7,8 +7,10 @@ from sqlalchemy.orm import Session
 from app.domain.terrain import generate_contours
 from app.infrastructure.db import get_db
 from app.infrastructure.elevation_client import BoundingBox, ElevationClient
+from app.infrastructure.geocoding_client import GeocodingClient
 from app.infrastructure.models import Village
-from app.schemas.village import BoundingBoxOut, ElevationOut, VillageOut
+from app.infrastructure.village_repository import create_village, find_nearby
+from app.schemas.village import BoundingBoxOut, ElevationOut, VillageCreate, VillageOut
 
 router = APIRouter(prefix="/villages", tags=["villages"])
 
@@ -27,6 +29,39 @@ def list_villages(db: Session = Depends(get_db)):
         )
         for v in villages
     ]
+
+
+@router.post("", response_model=VillageOut)
+def create_village_from_point(payload: VillageCreate, db: Session = Depends(get_db)):
+    existing = find_nearby(db, lat=payload.lat, lon=payload.lon)
+    if existing is not None:
+        return VillageOut(
+            id=existing.id,
+            name=existing.name,
+            state=existing.state,
+            district=existing.district,
+            lat=payload.lat,
+            lon=payload.lon,
+        )
+
+    geocoder = GeocodingClient()
+    try:
+        place = geocoder.reverse(payload.lat, payload.lon)
+    finally:
+        geocoder.close()
+
+    if place is None:
+        raise HTTPException(status_code=422, detail="couldn't identify a site at this location")
+
+    address = place.get("address", {})
+    name = place.get("name") or address.get("city") or address.get("town") or address.get("village") or place["display_name"].split(",")[0]
+    state = address.get("state", "")
+    district = address.get("state_district") or address.get("county") or ""
+
+    village = create_village(db, lat=payload.lat, lon=payload.lon, name=name, state=state, district=district)
+    db.commit()
+
+    return VillageOut(id=village.id, name=name, state=state, district=district, lat=payload.lat, lon=payload.lon)
 
 
 @router.get("/{village_id}/elevation", response_model=ElevationOut)

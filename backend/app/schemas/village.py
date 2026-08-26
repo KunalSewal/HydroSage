@@ -1,6 +1,6 @@
 import uuid
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class VillageOut(BaseModel):
@@ -10,6 +10,11 @@ class VillageOut(BaseModel):
     district: str
     lat: float
     lon: float
+
+
+class VillageCreate(BaseModel):
+    lat: float = Field(..., ge=-90, le=90)
+    lon: float = Field(..., ge=-180, le=180)
 
 
 class Contour(BaseModel):
