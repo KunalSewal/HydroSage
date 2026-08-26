@@ -49,3 +49,47 @@ Status: Accepted
 **Decision:** Use OpenZenith as the elevation data source. The user confirmed it's a real API (`https://openzenith.cyopsys.com/api/elevation?lat=..&lon=..`), offering tile, cURL, JS, and Python access.
 
 **Rationale:** Matches the project description's own suggestion and was confirmed working by the user. The elevation-fetch module should sit behind a thin internal interface (not called directly from domain/business logic) so this can be swapped for OpenTopography or another source later without touching catchment/runoff logic downstream — this was already the plan per the HLD's own risk mitigation for "rainfall API data sparse" and applies equally here.
+
+---
+
+## D-003: Use OpenZenith for elevation, satellite imagery, and OSM land/geocoding data
+
+Date: 2026-08-25
+Status: Accepted
+
+**Context:** Investigated OpenZenith's actual API surface (via its OpenAPI spec) rather than assuming it was only the single point-elevation endpoint named in the project description. It turned out to expose far more: `/api/elevation` (point) and `/api/elevation/batch` (up to 2000 points); `/api/dem-tile/{z}/{x}/{y}` (Terrarium-PNG DEM raster tiles, z0–14, Copernicus GLO-30/SRTM-class ~30m source resolution) and `/api/tile/{z}/{x}/{y}` (raw Int16 DEM); `/api/sentinel2/{z}/{x}/{y}` (Sentinel-2 imagery tiles); `/api/overpass` (OpenStreetMap Overpass QL proxy); `/api/geocode` / `/api/reverse-geocode` (Nominatim); `/api/waterways` (OSM rivers/lakes as GeoJSON). No API key required. Verified live: fetched a real DEM tile for the Hiware Bazar area (Ahmednagar/Ahilyanagar district, Maharashtra — see D-004) and confirmed the Terrarium decoding formula (`elevation = R*256 + G + B/256 - 32768`) produces plausible elevation values matching the independently-queried point elevation for the same location.
+
+**Decision:** Use OpenZenith as the single external API for elevation (point, batch, and DEM tiles), satellite imagery (Sentinel-2 tiles), village geocoding, and the OSM Overpass proxy that will back the land-availability approach from `ARCHITECTURE.md`. This resolves `PROJECT_BRIEF.md` open questions #1 (satellite imagery) and materially informs #2 (land-availability proxy) — one API surface instead of three separate integrations (elevation API + imagery API + a raw OSM/Overpass client).
+
+**Rationale:** Fewer external services to integrate, authenticate against, and handle failure modes for, without giving up any capability — each piece (DEM tiles, Sentinel-2, Overpass) is a distinct, independently-documented endpoint behind the same host, not a compromise substitute. Keeps the internal `elevation_client` / future `imagery_client` interfaces thin so any individual piece can still be swapped out later without touching domain logic, per D-002's rationale.
+
+---
+
+## D-004: First demo village — Hiware Bazar, Ahmednagar (Ahilyanagar) district, Maharashtra
+
+Date: 2026-08-25
+Status: Accepted
+
+**Context:** `ARCHITECTURE.md` open question #3 (how the village list is sourced) needed a concrete starting point to build and test the pipeline against. No specific region was given in the project description or HLD.
+
+**Decision:** Seed the database with Hiware Bazar as the first demo village (geocoded via OpenZenith: 19.0679874°N, 74.6012297°E).
+
+**Rationale:** It's a real, well-documented Indian watershed-management success story built substantially on the same intervention this project models (check dams, rainwater-harvesting ponds, catchment treatment), which gives the eventual technical report a concrete, verifiable reference case rather than an arbitrary coordinate. Not exclusive — more villages can be seeded the same way once the ingestion pipeline works end-to-end for this one. Revisit if a different region is preferred.
+
+---
+
+## D-005: Move off OpenZenith — elevation to OpenTopography, geocoding to Nominatim, imagery to Esri World Imagery
+
+Date: 2026-08-26
+Status: Accepted — supersedes D-002 and the elevation/imagery/geocoding parts of D-003
+
+**Context:** While preparing the implementation plan for the village-selection frontend (`docs/superpowers/specs/2026-08-26-village-map-selection-design.md`), OpenZenith's entire `/api/*` surface — including `/api/elevation` and `/api/dem-tile`, both verified working the day before — started returning 404 across the board (confirmed independently by the user in their own browser, ruling out a client-side or network-specific cause). It later came back, but flaky: retesting `/api/dem-tile` immediately afterward failed 2 of 4 attempts with 503, and `/api/elevation` failed 1 of 4. Its own `/api/health` response reveals why — it's backed by a Hugging Face-hosted dataset repo (`aliasfox/srtm30m-ozt2-v2`, with a documented fallback repo, implying the maintainer already knows it drops out) behind Cloudflare edge functions, not dedicated geospatial serving infrastructure.
+
+**Decision:** Move elevation to OpenTopography's Global DEM API (Copernicus GLO-30, 30m), geocoding to Nominatim's public API directly, and the satellite imagery layer to Esri World Imagery — three separate, individually well-established services instead of one convenient aggregator. Verified all three for real before committing:
+- OpenTopography: real API key obtained (user signed up, Registered User tier — sufficient; point-cloud limits and OT+ are irrelevant, we only use the raster Global DEM endpoint). A live call for the same Hiware Bazar bounding box used throughout this project returned a valid GeoTIFF (299×475, EPSG:4326, 662.8–959.2m) that closely matches what OpenZenith returned for the identical bbox the day before (662–960m) — two independent sources agreeing is good evidence both are accurate.
+- Nominatim: live forward-geocode ("Hiware Bazar, Maharashtra, India") and reverse-geocode (the Bhilai/Durg default map center) calls both returned correct results.
+- Esri World Imagery: a standard, widely-used public XYZ tile service; needs no backend proxy at all, just a Leaflet tile-layer URL on the frontend — simpler than routing imagery through our own API.
+
+**Rationale:** OpenTopography is NSF/San Diego Supercomputer Center-backed infrastructure with over a decade of uptime and use in published research — a materially different reliability class than a single-maintainer hobby aggregator, which matters because elevation/terrain data feeds the two most heavily-weighted grading criteria (functionality + terrain/catchment analysis, 55/100 combined, per `PROJECT_BRIEF.md`). It's also literally the technology the original project description suggested, which strengthens the eventual technical report. The Global DEM API returns a GeoTIFF directly for a bounding box, which `rasterio` (already a dependency) reads with georeferencing built in — simpler than OpenZenith's tile-fetch-and-Terrarium-decode approach, not just more reliable. The trade-off is a daily rate limit (50 calls/day on the free tier); this is workable because each analyzed site's DEM gets cached in MinIO after first fetch (already the plan per D-001), so the limit applies to *new* sites per day, not total interactions. The broader principle, extended consistently to imagery and geocoding too: several proven, single-purpose, institutionally-backed services beat one convenient but unproven all-in-one aggregator, especially for something that can't be fully retested right before it's graded.
+
+**Impact:** `app/infrastructure/elevation_client.py` gets rewritten against OpenTopography instead of OpenZenith (same external interface shape — this swap is exactly why D-002 argued for a thin, swappable client in the first place). A new `app/infrastructure/geocoding_client.py` targets Nominatim directly. The already-working `GET /villages/{id}/elevation` endpoint and its tests get updated accordingly. `docs/ARCHITECTURE.md`'s "External API surface" section and the village-selection spec are updated to match.

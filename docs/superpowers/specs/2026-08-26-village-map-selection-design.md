@@ -23,9 +23,9 @@ Catchment delineation UI, rainfall chart, pond depth/dimension recommendation, a
 ## User flow
 
 1. App loads. Browser requests geolocation permission. If granted, map centers on the user's location; if denied or unavailable, it falls back to a fixed default center near Bhilai/Durg, Chhattisgarh (~21.19°N, 81.30°E, zoom 11). A "locate me" control lets the user retry at any time.
-2. The user either types a place name into a search box (geocoded via the backend, which proxies OpenZenith's `/api/geocode`) to jump the map there, or clicks directly anywhere on the map.
+2. The user either types a place name into a search box (geocoded via the backend, which proxies Nominatim's `/search` — see `docs/DECISIONS.md` D-005) to jump the map there, or clicks directly anywhere on the map.
 3. On click, a marker drops immediately (instant feedback) and a side panel opens showing a "locating..." state while the backend reverse-geocodes the point for a human-readable label.
-4. Once the site is identified, the panel offers "Analyze this site." Triggering it walks through visible stages in the panel: "fetching elevation..." → contour lines draw onto the map as they arrive → elevation stats (min/max) populate the panel. A satellite imagery basemap layer is available as a toggle throughout (Sentinel-2 tiles via the existing OpenZenith proxy path).
+4. Once the site is identified, the panel offers "Analyze this site." Triggering it walks through visible stages in the panel: "fetching elevation..." → contour lines draw onto the map as they arrive → elevation stats (min/max) populate the panel. A satellite imagery basemap layer (Esri World Imagery, fetched directly by the frontend — no backend proxy needed) is available as a toggle throughout.
 5. If any stage fails (network error, geolocation denied, reverse-geocode miss, elevation fetch failure), the panel shows a specific inline error for that stage — not a silent failure or a generic toast — with a retry action where it makes sense.
 
 ## Architecture
@@ -37,20 +37,21 @@ Catchment delineation UI, rainfall chart, pond depth/dimension recommendation, a
 - `hooks/useGeolocation.ts` — wraps the browser Geolocation API with the permission/fallback logic from the user flow.
 - `api/client.ts` — thin fetch wrapper for the backend endpoints used below; one function per endpoint, typed responses matching the backend's Pydantic schemas.
 
-**Backend** — one small additive endpoint, everything else already exists and is unchanged:
-- `POST /villages` — body `{lat, lon}`, each validated to a real coordinate range (`lat` -90..90, `lon` -180..180; FastAPI/Pydantic rejects anything outside that with a 422 before it reaches the handler). Reverse-geocodes the point (new thin `geocoding_client.py` in `app/infrastructure/`, same pattern as `elevation_client.py`), builds a bounding box around it the same way `scripts/seed_villages.py` does today, and creates a `Village` row — or returns the existing one if a village's centroid already exists within 500m of the clicked point (`ST_DWithin` on `centroid::geography`), avoiding duplicate rows every time someone clicks near the same spot. Returns the same `VillageOut` shape `GET /villages` already returns.
-- `GET /villages/{id}/elevation` — unchanged, already returns contour geometry scoped to that village's bounding box.
+**Backend** — geocoding now goes through our own API (per D-005, Nominatim requires a descriptive `User-Agent` and a courtesy rate limit, better enforced server-side than trusted to every browser client) plus one small additive endpoint for site selection; the elevation endpoint's contract is unchanged even though its internals move to OpenTopography (D-005):
+- `GET /geocode?query=` — thin proxy to Nominatim's `/search` via the new `geocoding_client.py` (`app/infrastructure/`, same pattern as `elevation_client.py`). Backs `SearchBox`.
+- `POST /villages` — body `{lat, lon}`, each validated to a real coordinate range (`lat` -90..90, `lon` -180..180; FastAPI/Pydantic rejects anything outside that with a 422 before it reaches the handler). Reverse-geocodes the point (`geocoding_client.py`'s `/reverse`), builds a bounding box around it the same way `scripts/seed_villages.py` does today, and creates a `Village` row — or returns the existing one if a village's centroid already exists within 500m of the clicked point (`ST_DWithin` on `centroid::geography`), avoiding duplicate rows every time someone clicks near the same spot. Returns the same `VillageOut` shape `GET /villages` already returns.
+- `GET /villages/{id}/elevation` — same request/response contract as today; `elevation_client.py` internals swap from OpenZenith's tile-fetch-and-Terrarium-decode to OpenTopography's direct GeoTIFF-per-bbox (D-005), which `generate_contours` (unchanged) doesn't need to know about.
 
 ## Data flow
 
 ```
 click (lat, lon)
   → POST /villages {lat, lon}
-      → reverse-geocode (OpenZenith) for the label
+      → reverse-geocode (Nominatim) for the label
       → find-or-create Village row (PostGIS ST_DWithin proximity check)
       ← VillageOut {id, name, state, district, lat, lon}
   → GET /villages/{id}/elevation
-      → DEM tiles (OpenZenith) → mosaic → contour extraction (existing, unchanged)
+      → DEM GeoTIFF for bbox (OpenTopography) → contour extraction (existing, unchanged)
       ← ElevationOut {bbox, min/max elevation, contours[]}
   → MapView draws contours; SitePanel shows stats
 ```
@@ -58,7 +59,7 @@ click (lat, lon)
 ## Error handling
 
 - Geolocation denied/unavailable: fall back to the fixed default center; no error shown (this is an expected, non-broken path), just the "locate me" control staying available.
-- Reverse-geocode or elevation fetch fails (OpenZenith unreachable, timeout, bad response): `SitePanel` shows an inline error for that specific stage with a "retry" button; the map marker stays so the user doesn't lose their selection.
+- Reverse-geocode or elevation fetch fails (Nominatim/OpenTopography unreachable, timeout, bad response, or OpenTopography's daily rate limit hit): `SitePanel` shows an inline error for that specific stage with a "retry" button; the map marker stays so the user doesn't lose their selection.
 - `POST /villages` with `lat`/`lon` outside valid coordinate range: Pydantic validation returns 422 automatically. A geographically valid but unresolvable point (e.g. open ocean, no reverse-geocode match): reverse-geocode call returns no result, handler responds 422 with a distinct message; panel surfaces it as "couldn't identify a site here."
 
 ## Visual design & animation

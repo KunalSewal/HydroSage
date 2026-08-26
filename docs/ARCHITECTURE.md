@@ -4,7 +4,9 @@ Tracks architecture observations and proposed changes. The handwritten HLD ([doc
 
 ## Status
 
-Core architecture decided — see `DECISIONS.md` (D-001, D-002). Remaining open items are concrete data-source picks for satellite imagery, the land-availability proxy, and the village list (below), which don't block scaffolding but do block building the ingestion module.
+Core architecture decided — see `DECISIONS.md` (D-001–D-004). Remaining open item is the land-availability proxy (below).
+
+**Implemented and verified end-to-end** (real PostGIS via Docker Compose, real OpenZenith API, no mocks): `Village` model + migration; seed script (Hiware Bazar, D-004); `ElevationClient` (point, batch, DEM-tile fetch + Terrarium decode + bbox mosaic — confirmed the decoded tile elevations bracket the independently-queried point elevation for the same location); `generate_contours` domain function; `GET /villages` and `GET /villages/{id}/elevation` wired to real data, returning real contour geometry for Hiware Bazar (662–960m range, 310 contour lines). Everything else in the API design is still a `501` stub.
 
 ## HLD summary (as proposed)
 
@@ -69,10 +71,21 @@ Resolved by D-001: keep Celery+Redis+worker pool, PostGIS, object storage, Docke
 | Confirmed OpenZenith as the elevation API | User verified it's a real, working API (D-002) | 2026-08-25 |
 | Frontend: added TypeScript to the HLD's React + Leaflet + Chart.js | Type safety for code-quality criterion; no functional change | 2026-08-25 |
 
+## External API surface
+
+Originally built entirely against OpenZenith (project description named it as the elevation source, and it turned out to cover far more — see D-003). Moved off it per D-005 after it proved flaky in practice (a full outage, then intermittent 503s even after "recovering") — replaced with three separate, individually well-established services instead of one convenient aggregator:
+
+| Need | Provider | Endpoint | Notes |
+|---|---|---|---|
+| DEM raster (area) | OpenTopography | `GET /API/globaldem?demtype=COP30&south&north&east&west&outputFormat=GTiff&API_Key=...` | Returns a GeoTIFF directly for a bbox — read with `rasterio` (already a dependency), no tile math needed. Free tier: 50 calls/day (200/day academic), workable because each site's DEM is cached in MinIO after first fetch. Verified live: 299×475 raster, EPSG:4326, 662.8–959.2m for the Hiware Bazar bbox — closely matches OpenZenith's figures for the same area. |
+| Village/place geocoding (both directions) | Nominatim | `GET /search` / `GET /reverse` | Direct — OpenZenith was itself just proxying this. No key; usage policy requires a descriptive `User-Agent` and ~1 request/sec. Verified live for both a forward query and reverse-geocoding the Bhilai/Durg default map center. |
+| Satellite imagery | Esri World Imagery | Standard XYZ tile URL | Needs no backend proxy at all — a Leaflet tile-layer URL on the frontend directly. |
+| Land-use data (future — land-availability proxy) | OSM Overpass API | `POST https://overpass-api.de/api/interpreter` | Direct — same reasoning as geocoding; feeds open question #1 below, not yet built. |
+
+`app/infrastructure/elevation_client.py` wraps OpenTopography; `app/infrastructure/geocoding_client.py` wraps Nominatim. Both stay thin per D-002/D-005's rationale — swappable again if needed without touching domain logic.
+
 ## Open questions
 
-1. Satellite imagery source — HLD proposed Bhuvan or Sentinel-based, undecided. Functional requirement #1 only needs a displayed imagery layer, which a public tile basemap (e.g. Esri World Imagery or Sentinel-2 cloudless/EOX) can satisfy without managing raw band downloads — leaning this way unless the project needs raw multispectral data for analysis (e.g. land-cover classification), which isn't currently a stated requirement.
-2. Government-land proxy dataset — no live API exists (HLD's own risk list). Leaning toward OpenStreetMap land-use polygons (via Overpass or a preprocessed extract) filtered to non-built-up, non-water land within a village boundary, designed to be swappable for an official source later, per the HLD's own mitigation plan.
-3. Village boundary/list source — not specified in the brief. Leaning toward a small curated set of real villages for the initial build (seeded into PostGIS), with the schema/ingestion designed to take a larger boundary dataset (e.g. OSM admin boundaries) later.
-
-Will proceed with the "leaning toward" options for #1–3 when the ingestion module is built, unless redirected before then.
+1. Government-land proxy dataset — no live API exists (HLD's own risk list). Implementation path: OSM Overpass, querying land-use polygons filtered to non-built-up, non-water land within a village's bounds, designed to be swappable for an official source later, per the HLD's own mitigation plan.
+2. ~~Village boundary/list source~~ — superseded by the map-first, click-anywhere design (`docs/superpowers/specs/2026-08-26-village-map-selection-design.md`): no pre-seeded list at all, villages are created on demand from wherever the user selects on the map. Hiware Bazar (D-004) remains seeded as a working example.
+3. ~~Satellite imagery source~~ — resolved: Esri World Imagery (D-005).
