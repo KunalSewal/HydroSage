@@ -8,6 +8,11 @@ class BoundingBoxOut(BaseModel):
     max_lat: float
 
 
+class ContourOut(BaseModel):
+    elevation: float
+    coordinates: list[list[float]]  # [[lon, lat], ...]
+
+
 class CatchmentAnalysisOut(BaseModel):
     pond_location: dict[str, float]  # {"lat": ..., "lon": ...}
     catchment_area_m2: float
@@ -17,3 +22,6 @@ class CatchmentAnalysisOut(BaseModel):
     catchment_boundary: list[list[float]]  # [[lon, lat], ...], closed ring
     source_bbox: BoundingBoxOut
     grid_resolution: int
+    min_elevation: float
+    max_elevation: float
+    contours: list[ContourOut]

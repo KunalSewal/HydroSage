@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, UploadFile
 
 from app.domain.catchment import analyze_catchment
+from app.domain.terrain import generate_contours
 from app.infrastructure.kml_parser import DEFAULT_GRID_SIZE, parse_contour_kml
 from app.schemas.catchment import BoundingBoxOut, CatchmentAnalysisOut
 
@@ -23,6 +24,7 @@ async def analyze_contour(file: UploadFile):
         raise HTTPException(status_code=422, detail=f"could not parse contour KML: {error}")
 
     result = analyze_catchment(elevation, bbox)
+    contours = generate_contours(elevation, bbox)
 
     return CatchmentAnalysisOut(
         pond_location={"lat": result.pond_lat, "lon": result.pond_lon},
@@ -35,4 +37,7 @@ async def analyze_contour(file: UploadFile):
             min_lon=bbox.min_lon, min_lat=bbox.min_lat, max_lon=bbox.max_lon, max_lat=bbox.max_lat
         ),
         grid_resolution=DEFAULT_GRID_SIZE,
+        min_elevation=float(elevation.min()),
+        max_elevation=float(elevation.max()),
+        contours=[{"elevation": c["elevation"], "coordinates": c["coordinates"]} for c in contours],
     )

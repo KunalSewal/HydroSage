@@ -35,6 +35,20 @@ export interface GeocodeResult {
   lon: number
 }
 
+export interface CatchmentAnalysis {
+  pond_location: { lat: number; lon: number }
+  catchment_area_m2: number
+  catchment_area_hectares: number
+  catchment_cell_count: number
+  flow_accumulation_at_pond: number
+  catchment_boundary: [number, number][] // [lon, lat], closed ring
+  source_bbox: BoundingBox
+  grid_resolution: number
+  min_elevation: number
+  max_elevation: number
+  contours: Contour[]
+}
+
 async function parseOrThrow<T>(response: Response): Promise<T> {
   const body = await response.json()
   if (!response.ok) {
@@ -65,4 +79,11 @@ export async function getElevation(villageId: string): Promise<ElevationData> {
 export async function searchPlaces(query: string): Promise<GeocodeResult[]> {
   const response = await fetch(`${API_BASE}/geocode?query=${encodeURIComponent(query)}`)
   return parseOrThrow<GeocodeResult[]>(response)
+}
+
+export async function analyzeContourFile(file: File): Promise<CatchmentAnalysis> {
+  const formData = new FormData()
+  formData.append('file', file)
+  const response = await fetch(`${API_BASE}/analyzeContour`, { method: 'POST', body: formData })
+  return parseOrThrow<CatchmentAnalysis>(response)
 }

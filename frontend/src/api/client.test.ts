@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createVillage, getElevation, listVillages, searchPlaces } from './client'
+import { analyzeContourFile, createVillage, getElevation, listVillages, searchPlaces } from './client'
 
 describe('api client', () => {
   afterEach(() => {
@@ -40,5 +40,43 @@ describe('api client', () => {
     const result = await searchPlaces('Bhilai')
 
     expect(result).toEqual(results)
+  })
+
+  it('analyzeContourFile uploads the file as multipart form data and returns the analysis', async () => {
+    const analysis = {
+      pond_location: { lat: 21.24, lon: 81.29 },
+      catchment_area_m2: 1_787_602,
+      catchment_area_hectares: 178.76,
+      catchment_cell_count: 1234,
+      flow_accumulation_at_pond: 999,
+      catchment_boundary: [[81.28, 21.24]],
+      source_bbox: { min_lon: 81.28, min_lat: 21.24, max_lon: 81.31, max_lat: 21.26 },
+      grid_resolution: 300,
+      min_elevation: 267,
+      max_elevation: 298,
+      contours: [],
+    }
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(analysis) })
+    vi.stubGlobal('fetch', fetchMock)
+    const file = new File(['<kml/>'], 'contours.kml', { type: 'application/vnd.google-earth.kml+xml' })
+
+    const result = await analyzeContourFile(file)
+
+    expect(result).toEqual(analysis)
+    const [url, options] = fetchMock.mock.calls[0]
+    expect(url).toContain('/analyzeContour')
+    expect(options.method).toBe('POST')
+    expect(options.body).toBeInstanceOf(FormData)
+    expect(options.body.get('file')).toBe(file)
+  })
+
+  it('analyzeContourFile throws a readable error on a non-OK response', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: false, status: 422, json: () => Promise.resolve({ detail: 'expected a .kml file' }) }),
+    )
+    const file = new File(['not kml'], 'notes.txt')
+
+    await expect(analyzeContourFile(file)).rejects.toThrow('expected a .kml file')
   })
 })

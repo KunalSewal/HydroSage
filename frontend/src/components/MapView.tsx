@@ -1,8 +1,9 @@
 import 'leaflet/dist/leaflet.css'
 import L from 'leaflet'
-import { useEffect, useState } from 'react'
-import { MapContainer, Marker, Polyline, TileLayer, useMap, useMapEvents } from 'react-leaflet'
-import type { Contour } from '../api/client'
+import { useEffect, useMemo, useState } from 'react'
+import { MapContainer, Marker, Polygon, Polyline, TileLayer, useMap, useMapEvents } from 'react-leaflet'
+import type { BoundingBox, Contour } from '../api/client'
+import { contourColor } from '../lib/contourColor'
 
 // A fresh element per distinct position (see the `key` on <Marker> below)
 // is required for the CSS mount animation to replay on every new click —
@@ -14,11 +15,23 @@ const markerIcon = L.divIcon({
   iconAnchor: [8, 8],
 })
 
+// A distinct color from the site-selection marker, so a recommended pond
+// location (from the KML/catchment flow) doesn't read as "the point you clicked".
+const pondMarkerIcon = L.divIcon({
+  className: 'hydrosage-marker',
+  html: '<div class="marker-bounce h-4 w-4 rounded-full bg-amber-400 ring-4 ring-amber-400/30"></div>',
+  iconSize: [16, 16],
+  iconAnchor: [8, 8],
+})
+
 interface MapViewProps {
   center: { lat: number; lon: number }
   markerPosition: { lat: number; lon: number } | null
   contours: Contour[]
   onMapClick: (lat: number, lon: number) => void
+  catchmentBoundary?: [number, number][] | null
+  pondLocation?: { lat: number; lon: number } | null
+  fitBoundsTo?: BoundingBox | null
 }
 
 function ClickHandler({ onMapClick }: { onMapClick: (lat: number, lon: number) => void }) {
@@ -32,9 +45,17 @@ function ClickHandler({ onMapClick }: { onMapClick: (lat: number, lon: number) =
 
 // Contours arrive as [lon, lat] (GeoJSON order); Leaflet wants [lat, lng].
 // Revealed a few at a time on a short interval for a "drawing in" feel
-// rather than every line snapping in at once.
+// rather than every line snapping in at once. Colored by elevation (a
+// hypsometric-style ramp) so the distinct bands the backend already
+// computes are actually visible, instead of one flat line color.
 function ContourLayer({ contours }: { contours: Contour[] }) {
   const [visibleCount, setVisibleCount] = useState(0)
+
+  const [minElevation, maxElevation] = useMemo(() => {
+    if (contours.length === 0) return [0, 0]
+    const elevations = contours.map((c) => c.elevation)
+    return [Math.min(...elevations), Math.max(...elevations)]
+  }, [contours])
 
   useEffect(() => {
     setVisibleCount(0)
@@ -56,10 +77,26 @@ function ContourLayer({ contours }: { contours: Contour[] }) {
         <Polyline
           key={index}
           positions={contour.coordinates.map(([lon, lat]) => [lat, lon])}
-          pathOptions={{ color: '#38bdf8', weight: 1.5, opacity: 0.8 }}
+          pathOptions={{
+            color: contourColor(contour.elevation, minElevation, maxElevation),
+            weight: 1.5,
+            opacity: 0.85,
+          }}
         />
       ))}
     </>
+  )
+}
+
+// The catchment boundary traced by the D8 delineation (domain/catchment.py) —
+// the area of land that drains toward the recommended pond site.
+function CatchmentBoundaryLayer({ boundary }: { boundary: [number, number][] }) {
+  if (boundary.length === 0) return null
+  return (
+    <Polygon
+      positions={boundary.map(([lon, lat]) => [lat, lon])}
+      pathOptions={{ color: '#38bdf8', weight: 2, fillColor: '#38bdf8', fillOpacity: 0.12 }}
+    />
   )
 }
 
@@ -71,7 +108,31 @@ function RecenterOnChange({ position }: { position: { lat: number; lon: number }
   return null
 }
 
-export default function MapView({ center, markerPosition, contours, onMapClick }: MapViewProps) {
+// Used by the KML-upload flow: there's no GPS/click point to recenter on,
+// so the map jumps to fit the uploaded contour map's actual coverage area.
+function FitBounds({ bbox }: { bbox: BoundingBox }) {
+  const map = useMap()
+  useEffect(() => {
+    map.fitBounds(
+      [
+        [bbox.min_lat, bbox.min_lon],
+        [bbox.max_lat, bbox.max_lon],
+      ],
+      { padding: [32, 32] },
+    )
+  }, [bbox.min_lat, bbox.min_lon, bbox.max_lat, bbox.max_lon, map])
+  return null
+}
+
+export default function MapView({
+  center,
+  markerPosition,
+  contours,
+  onMapClick,
+  catchmentBoundary,
+  pondLocation,
+  fitBoundsTo,
+}: MapViewProps) {
   return (
     <MapContainer center={[center.lat, center.lon]} zoom={12} className="h-full w-full">
       <TileLayer
@@ -79,7 +140,7 @@ export default function MapView({ center, markerPosition, contours, onMapClick }
         url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
       />
       <ClickHandler onMapClick={onMapClick} />
-      <RecenterOnChange position={markerPosition ?? center} />
+      {fitBoundsTo ? <FitBounds bbox={fitBoundsTo} /> : <RecenterOnChange position={markerPosition ?? center} />}
       {markerPosition && (
         <Marker
           key={`${markerPosition.lat}-${markerPosition.lon}`}
@@ -87,6 +148,14 @@ export default function MapView({ center, markerPosition, contours, onMapClick }
           icon={markerIcon}
         />
       )}
+      {pondLocation && (
+        <Marker
+          key={`pond-${pondLocation.lat}-${pondLocation.lon}`}
+          position={[pondLocation.lat, pondLocation.lon]}
+          icon={pondMarkerIcon}
+        />
+      )}
+      {catchmentBoundary && <CatchmentBoundaryLayer boundary={catchmentBoundary} />}
       <ContourLayer contours={contours} />
     </MapContainer>
   )

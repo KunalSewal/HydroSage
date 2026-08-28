@@ -54,9 +54,7 @@ export default function SitePanel({ state, onAnalyze, onRetry }: SitePanelProps)
   ])
 
   return (
-    <div className="flex h-full w-80 flex-col gap-4 bg-slate-900/90 p-6 text-slate-100 backdrop-blur">
-      <h1 className="font-display text-xl font-semibold">HydroSage</h1>
-
+    <>
       <AnimatePresence mode="wait">
         {state.status === 'idle' && (
           <motion.p
@@ -157,6 +155,6 @@ export default function SitePanel({ state, onAnalyze, onRetry }: SitePanelProps)
           </motion.div>
         )}
       </AnimatePresence>
-    </div>
+    </>
   )
 }
