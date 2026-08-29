@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     nominatim_base_url: str = "https://nominatim.openstreetmap.org"
     nominatim_user_agent: str = "HydroSage/0.1 (student project, IIT Bhilai)"
 
+    open_meteo_base_url: str = "https://archive-api.open-meteo.com"
+
 
 @lru_cache
 def get_settings() -> Settings:
