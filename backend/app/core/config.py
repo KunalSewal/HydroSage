@@ -29,6 +29,8 @@ class Settings(BaseSettings):
 
     open_meteo_base_url: str = "https://archive-api.open-meteo.com"
 
+    overpass_base_url: str = "https://overpass-api.de"
+
 
 @lru_cache
 def get_settings() -> Settings:
