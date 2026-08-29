@@ -4,9 +4,7 @@ Tracks architecture observations and proposed changes. The handwritten HLD ([doc
 
 ## Status
 
-Core architecture decided — see `DECISIONS.md` (D-001–D-004). Remaining open item is the land-availability proxy (below).
-
-**Implemented and verified end-to-end** (real PostGIS via Docker Compose, real OpenZenith API, no mocks): `Village` model + migration; seed script (Hiware Bazar, D-004); `ElevationClient` (point, batch, DEM-tile fetch + Terrarium decode + bbox mosaic — confirmed the decoded tile elevations bracket the independently-queried point elevation for the same location); `generate_contours` domain function; `GET /villages` and `GET /villages/{id}/elevation` wired to real data, returning real contour geometry for Hiware Bazar (662–960m range, 310 contour lines). Everything else in the API design is still a `501` stub.
+Core architecture decided — see `DECISIONS.md` (D-001–D-006). The full pipeline described in the HLD's own workflow (terrain → catchment → rainfall → runoff → pond sizing, checked against land availability, overlaid in one view) is built and verified against real data on both input paths (a live DEM fetch from a map click, and an uploaded contour KML). Land-availability (open question #1 below, historically) is resolved. Remaining gaps are deliverables, not architecture: the Phase 1 report, and a live deployment — see `docs/PROJECT_STATUS.md` for exact current state.
 
 ## HLD summary (as proposed)
 
@@ -22,70 +20,81 @@ Core architecture decided — see `DECISIONS.md` (D-001–D-004). Remaining open
 
 **Risks the HLD already names:** coarse DEM resolution for small ponds; sparse rainfall data in rural regions; no live government land-record API; catchment delineation being computationally expensive; frontend performance with large overlays; API and workers needing to scale independently.
 
-## Observations / concerns (to resolve before locking the stack)
+## Observations / concerns (as of initial planning — see "Current architecture" below for what actually shipped)
 
-The core geospatial methodology — D8 delineation, Curve Number runoff with a fallback, PostGIS for spatial data, an async job for the expensive catchment step — is sound and worth keeping. The concern is scale of supporting infrastructure relative to what's actually graded and what a single evaluated web app needs:
+The core geospatial methodology — D8 delineation, Curve Number runoff with a fallback, PostGIS for spatial data — was sound and worth keeping. The concern at the time was scale of supporting infrastructure relative to what's actually graded:
 
-1. **Infrastructure weight vs. rubric weight.** The HLD proposes a full microservices-shaped system: API gateway with Nginx, auth, rate limiting; Redis + Celery task queue; a separate worker pool; PostGIS *and* MinIO/S3 as two storage systems; Docker Compose orchestration. "System design and management" is 15/100 of the grade; functionality + terrain/catchment correctness is 55/100. Building and correctly documenting five infrastructure pieces is real time spent that isn't where the marks are, and each piece is a place for something to break before the demo. A single FastAPI process running catchment delineation in a background task/thread pool (still async from the client's perspective — same `POST .../catchment` → `GET /jobs/{id}` contract) can deliver the identical UX with far less to build, deploy, and explain, while leaving room to reintroduce Celery/Redis later if job volume or grading criteria actually demand it.
-2. **Two storage systems (PostGIS + MinIO).** Reasonable at production scale; for a bounded demo, local disk (or a `files/` volume) can hold DEM tiles/rasters just as well, with PostGIS handling all vector/relational data. Worth confirming before building both.
-3. **WebSocket job-status channel.** Adds a stateful connection to maintain. Polling `GET /jobs/{job_id}` (already in the API design) is simpler and sufficient for a single-user-at-a-time demo tool. Proposing to drop the WebSocket unless there's a specific reason to keep it.
-4. **Auth/rate-limiting at the gateway.** Not requested anywhere in the project description, which describes a single-role tool for a village administrator. Proposing to drop this unless the brief is revised.
-5. **Contour extraction via OpenCV `findContours`.** That's built for binary/segmented images; elevation contour lines are more naturally produced by marching squares over the raw raster (e.g., `skimage.measure.find_contours`, or GDAL's contour generation). Not a blocker now — worth deciding at implementation time, noted here so it isn't lost.
+1. **Infrastructure weight vs. rubric weight.** The HLD proposes a full microservices-shaped system: API gateway with Nginx, auth, rate limiting; Redis + Celery task queue; a separate worker pool; PostGIS *and* MinIO/S3 as two storage systems; Docker Compose orchestration. "System design and management" is 15/100 of the grade; functionality + terrain/catchment correctness is 55/100.
+2. **Two storage systems (PostGIS + MinIO).** Kept both in the end, each doing a job the other doesn't fit (see Current architecture) — not the local-disk simplification originally floated.
+3. **WebSocket job-status channel.** Dropped — no async job path was ever built (D-006), so this question is moot rather than resolved.
+4. **Auth/rate-limiting at the gateway.** Not requested anywhere in the project description. Dropped, never revisited.
+5. **Contour extraction.** Settled on `skimage.measure.find_contours` (marching squares over the raw raster), not OpenCV — the right call, unchanged since.
 
-Resolved by D-001: keep Celery+Redis+worker pool, PostGIS, object storage, Docker Compose (each has a concrete technical reason); drop the Nginx auth/rate-limiting gateway and the WebSocket channel (no stated requirement, polling suffices).
+Resolved by D-001 (2026-08-25): keep infrastructure with a concrete technical reason, drop the rest. Superseded in part by D-006 (2026-08-30): the Celery/worker piece never got a real justification in practice and was dropped; Redis was kept anyway, repurposed as the catchment-result cache.
 
 ## Current architecture
 
-**Client:** React + TypeScript + Vite, `react-leaflet` for the interactive map, Chart.js for rainfall/runoff graphs.
+**Client:** React + TypeScript + Vite, `react-leaflet` for the interactive map, Tailwind CSS v4, Framer Motion for animation, `lucide-react` for icons, Vitest + Testing Library. Chart.js was in the original HLD's proposed stack but was never actually used — there's no chart in the app; rainfall/runoff are presented as numbers and a color-ramp contour legend, not a graph. Worth adding if the report benefits from one, not currently planned.
 
-**Backend:** a single FastAPI service (async), organized as a modular monolith rather than a gateway + separate service layer — one deployable unit with clear internal module boundaries, not a network boundary, since there's no stated need to scale or deploy those pieces independently:
-- `app/api/` — HTTP routers only (villages, elevation, satellite, rainfall, catchment, jobs, recommend, report). No business logic here.
-- `app/domain/` — pure business logic: curve-number/runoff-coefficient runoff estimation, pond sizing, contour generation, catchment-delineation orchestration. No FastAPI, DB, or HTTP imports, so it's unit-testable in isolation and portable if the transport layer ever changes.
-- `app/infrastructure/` — PostGIS access (SQLAlchemy 2.0 + GeoAlchemy2), object storage client (MinIO/S3-compatible), external API clients (OpenZenith elevation, rainfall, imagery), Celery task definitions.
-- `app/schemas/` — Pydantic request/response models (also drives the auto-generated OpenAPI docs, covering the "API documentation" deliverable).
-- Alembic for migrations.
-- pytest, with `app/domain/` the priority for coverage since it's the part the 20-mark "terrain and catchment analysis" criterion actually evaluates.
+**Backend:** a single FastAPI service (synchronous request handling throughout — see "No async job path" below), organized as a modular monolith with clear internal module boundaries, not a network boundary:
+- `app/api/` — HTTP routers only (villages, rainfall, recommend, geocode, analyze_contour). `satellite.py` and `report.py` remain `501` stubs: satellite imagery is served client-side directly from Esri's tile service (no backend involvement needed), and no report-generation endpoint has been built (the Phase 1 report is a separate written deliverable, not an API route). No business logic in this layer.
+- `app/domain/` — pure business logic, no I/O: `terrain.py` (contour generation, with auto-picked round intervals and light smoothing), `catchment.py` (D8 flow routing via pysheds — samples a spread of local flow-accumulation maxima and picks the best-ranked candidate whose catchment area falls in a realistic range, rather than the single global maximum), `rainfall.py` (daily → monthly/annual aggregation), `runoff.py` (runoff-coefficient method), `pond.py` (depth/surface-area sizing), `land_availability.py` (exclusion-based available-land estimate from OSM features). Each is independently unit-tested — this is the layer the 20-mark "terrain and catchment analysis" criterion actually evaluates.
+- `app/services/` — a layer the original design didn't anticipate needing: orchestration that does real I/O across multiple domain functions and infrastructure clients for one use case, and is shared by more than one endpoint. Currently just `recommendation.py` (`compute_recommendation_fields`): rainfall → runoff → pond sizing → land-availability, used by both `POST /villages/{id}/recommend` (a village's stored location) and `POST /analyzeContour` (an uploaded survey's own bbox centroid — there's no "village" row to key off). Not pure enough for `domain/` (it calls `RainfallClient`/`LandUseClient`), not an HTTP concern for `api/`. Each piece it orchestrates is unit-tested on its own; this layer itself is verified live via its two callers, same as `api/`'s own endpoint-level orchestration always has been.
+- `app/infrastructure/` — PostGIS access (SQLAlchemy 2.0 + GeoAlchemy2), external API clients (`elevation_client.py`, `geocoding_client.py`, `rainfall_client.py`, `land_use_client.py`), KML parsing (`kml_parser.py`), and two caches: `dem_cache.py` (MinIO, raw DEM GeoTIFF bytes keyed by village) and `catchment_cache.py` (Redis, computed `CatchmentResult` keyed by village) — see "Caching" below.
+- `app/schemas/` — Pydantic request/response models, also driving the auto-generated OpenAPI docs (the "API documentation" deliverable). Shared-field base models (`CatchmentFieldsOut`, `RecommendationFieldsOut`) avoid duplicating response shapes across the two endpoints that independently compute the same things.
+- Alembic for migrations — applied automatically on every container start (`alembic upgrade head` before `uvicorn` in `backend/Dockerfile`'s `CMD`), not a manual step. Found the hard way: a fresh Postgres volume under Docker had no schema at all until this was added.
 
-**Async job path:** `POST /villages/{id}/catchment` (and `/recommend`) enqueue a Celery task and return a `job_id` immediately; `GET /jobs/{job_id}` is polled for status/result. Same contract the HLD proposed, minus the WebSocket channel.
+**No async job path.** The HLD's `POST .../catchment` → `job_id` → `GET /jobs/{id}` polling contract was never built — every endpoint (`/elevation`, `/recommend`, `/analyzeContour`) runs its full computation inline and returns the result directly. This has held up fine at the scale this app actually runs at (worst observed response time across the whole build: ~22s, and that was an external API degrading, not the app's own computation). See D-006 for the full reasoning and what got dropped as a result (`app/api/catchment.py`, `app/api/jobs.py`, the `worker` Docker Compose service).
 
-**Storage:** PostgreSQL+PostGIS for villages, land polygons, catchment boundaries, pond specs, and job status (vector/relational). MinIO (S3-compatible, local via Docker Compose) for raw DEM tiles, satellite imagery, and generated rasters (large binaries).
+**Caching.** Two caches, both added only after a concrete, measured cost was identified — not speculatively:
+- **DEM cache** (MinIO) protects OpenTopography's 50-calls/day free tier. Verified: 14.7s cold fetch → 1.5s cached, byte-identical result.
+- **Catchment-result cache** (Redis) avoids re-running the D8 pipeline when two different endpoints analyze the same site (e.g. "Analyze this site" then "Get pond recommendation" for the same village). Verified via direct Redis inspection that both endpoints share one computed result.
 
-**Deployment:** Docker Compose — `api`, `worker` (Celery), `redis`, `postgis`, `minio`. One command to stand up the full stack locally.
+**Storage:** PostgreSQL+PostGIS for villages (vector/relational data — the only thing that needs a real spatial database). MinIO (S3-compatible) for the DEM cache specifically — large binaries that don't belong as relational rows. Redis for the catchment-result cache — small JSON, short TTL, a different shape of caching need than MinIO's.
 
-**No auth layer.** Single implied user role (village administrator), nothing in the brief to protect against. Revisit if that changes.
+**Deployment:** Docker Compose — `postgis`, `redis`, `minio`, `api`, `frontend` (nginx serving a static Vite build; `frontend/Dockerfile` is new — the original HLD's client had no containerization plan). All services get `restart: unless-stopped`. CORS origins and the two host ports are environment-configured (`CORS_ALLOWED_ORIGINS`, `API_PORT`/`FRONTEND_PORT`), not hardcoded — a hardcoded `localhost`-only CORS allowlist already caused one real outage this project (D-005) and would have recurred at deployment otherwise.
+
+**No auth layer.** Single implied user role (village administrator), nothing in the brief to protect against. Unchanged since D-001.
 
 ## Boundaries and modules
 
-- **Ingestion** (`app/infrastructure/*_client.py`) — fetches/caches elevation (OpenZenith), rainfall, and satellite imagery from external APIs. Owns retry/caching; knows nothing about runoff or pond sizing.
+- **Ingestion** (`app/infrastructure/*_client.py`) — fetches elevation (OpenTopography), geocoding (Nominatim), rainfall (Open-Meteo), and land-use exclusion features (OSM Overpass) from external APIs. Owns retry/timeout behavior; knows nothing about runoff or pond sizing.
+- **Caching** (`app/infrastructure/dem_cache.py`, `catchment_cache.py`) — sits in front of the ingestion/computation it protects, never able to fail the request it's optimizing (every failure mode degrades to "recompute", never raises).
 - **Terrain processing** (`app/domain/terrain.py`) — DEM → contour geometry.
-- **Catchment delineation** (`app/domain/catchment.py`, run via Celery) — D8 flow direction/accumulation → watershed boundary from a candidate point.
-- **Runoff & recommendation** (`app/domain/runoff.py`, `app/domain/pond.py`) — Curve Number/coefficient runoff volume, pond depth/dimensions checked against available land. Pure functions over already-fetched data; no I/O.
-- **Presentation** (`app/api/`, frontend) — combines the above into the overlay view and report. Owns no business rules.
+- **Catchment delineation** (`app/domain/catchment.py`) — D8 flow direction/accumulation → a realistically-scaled watershed boundary and pond site. Run inline, not via a job queue (see "No async job path").
+- **Rainfall, runoff, and pond sizing** (`app/domain/rainfall.py`, `runoff.py`, `pond.py`) — pure functions over already-fetched data; no I/O.
+- **Land availability** (`app/domain/land_availability.py`) — pure geometry (shapely) over already-fetched OSM features; no I/O.
+- **Recommendation orchestration** (`app/services/recommendation.py`) — the one layer that does cross-cutting I/O across the above, shared by two endpoints. See its own section above.
+- **Presentation** (`app/api/`, frontend) — combines the above into the overlay view. Owns no business rules.
 
 ## Changes from the original HLD
 
 | Change | Reason | Date |
 |---|---|---|
 | Dropped Nginx gateway + auth/rate-limiting | No stated requirement for authentication or multi-tenancy (D-001) | 2026-08-25 |
-| Dropped WebSocket job-status channel, kept polling | Simpler, sufficient for single-user demo; can be added later without breaking the API (D-001) | 2026-08-25 |
-| Confirmed OpenZenith as the elevation API | User verified it's a real, working API (D-002) | 2026-08-25 |
-| Frontend: added TypeScript to the HLD's React + Leaflet + Chart.js | Type safety for code-quality criterion; no functional change | 2026-08-25 |
+| Dropped WebSocket job-status channel, kept polling | Simpler, sufficient for single-user demo; moot once the job path itself was dropped (D-006) | 2026-08-25 |
+| Confirmed OpenZenith as the elevation API, then moved off it | User verified OpenZenith was real; it then proved unreliable in practice, replaced with OpenTopography + Nominatim + Esri (D-005) | 2026-08-25 / 2026-08-26 |
+| Frontend: added TypeScript to the HLD's React + Leaflet + Chart.js | Type safety for code-quality criterion; Chart.js itself was never actually used | 2026-08-25 |
+| Dropped the Celery worker and async job contract entirely | Never wired to anything; every endpoint ran its computation inline instead and held up fine (D-006) | 2026-08-30 |
+| Added `app/services/` as a new module tier | Two endpoints needed the same rainfall/runoff/pond/land orchestration; neither `domain/` (has I/O) nor `api/` (shared business logic, not HTTP concern) fit | 2026-08-30 |
+| Catchment site selection rewritten | The original "single global flow-accumulation maximum" approach claimed 20-36% of any analyzed area regardless of input; rewritten to search for a realistically-scaled site instead | 2026-08-30 |
 
 ## External API surface
 
-Originally built entirely against OpenZenith (project description named it as the elevation source, and it turned out to cover far more — see D-003). Moved off it per D-005 after it proved flaky in practice (a full outage, then intermittent 503s even after "recovering") — replaced with three separate, individually well-established services instead of one convenient aggregator:
+Originally built entirely against OpenZenith (project description named it as the elevation source, and it turned out to cover far more — see D-003). Moved off it per D-005 after it proved flaky in practice — replaced with individually well-established, single-purpose services:
 
-| Need | Provider | Endpoint | Notes |
-|---|---|---|---|
-| DEM raster (area) | OpenTopography | `GET /API/globaldem?demtype=COP30&south&north&east&west&outputFormat=GTiff&API_Key=...` | Returns a GeoTIFF directly for a bbox — read with `rasterio` (already a dependency), no tile math needed. Free tier: 50 calls/day (200/day academic), workable because each site's DEM is cached in MinIO after first fetch. Verified live: 299×475 raster, EPSG:4326, 662.8–959.2m for the Hiware Bazar bbox — closely matches OpenZenith's figures for the same area. |
-| Village/place geocoding (both directions) | Nominatim | `GET /search` / `GET /reverse` | Direct — OpenZenith was itself just proxying this. No key; usage policy requires a descriptive `User-Agent` and ~1 request/sec. Verified live for both a forward query and reverse-geocoding the Bhilai/Durg default map center. |
-| Satellite imagery | Esri World Imagery | Standard XYZ tile URL | Needs no backend proxy at all — a Leaflet tile-layer URL on the frontend directly. |
-| Land-use data (future — land-availability proxy) | OSM Overpass API | `POST https://overpass-api.de/api/interpreter` | Direct — same reasoning as geocoding; feeds open question #1 below, not yet built. |
-
-`app/infrastructure/elevation_client.py` wraps OpenTopography; `app/infrastructure/geocoding_client.py` wraps Nominatim. Both stay thin per D-002/D-005's rationale — swappable again if needed without touching domain logic.
+| Need | Provider | Notes |
+|---|---|---|
+| DEM raster (area) | OpenTopography (`COP30`) | Returns a GeoTIFF directly for a bbox, read with `rasterio`. Free tier: 50 calls/day — protected by `dem_cache.py` (MinIO), so the limit applies to genuinely new sites, not repeat interactions. |
+| Village/place geocoding (both directions) | Nominatim | No key; usage policy requires a descriptive `User-Agent` and ~1 request/sec. |
+| Historical rainfall | Open-Meteo (archive API, ERA5 reanalysis) | No key. Chosen over NASA POWER (also free, also named in the brief) for finer resolution (~9-25km vs. ~50km). |
+| Land-use exclusion features | OSM Overpass API | No key, but some public mirrors reject a generic/bot-like `User-Agent` (403) — `land_use_client.py` sends the same descriptive one Nominatim requires. Best-effort: a failed lookup degrades the recommendation's land-availability fields to `null` rather than failing the whole request. |
+| Satellite imagery | Esri World Imagery | Standard XYZ tile URL, no backend proxy — a Leaflet tile-layer URL on the frontend directly. |
 
 ## Open questions
 
-1. Government-land proxy dataset — no live API exists (HLD's own risk list). Implementation path: OSM Overpass, querying land-use polygons filtered to non-built-up, non-water land within a village's bounds, designed to be swappable for an official source later, per the HLD's own mitigation plan.
-2. ~~Village boundary/list source~~ — superseded by the map-first, click-anywhere design (`docs/superpowers/specs/2026-08-26-village-map-selection-design.md`): no pre-seeded list at all, villages are created on demand from wherever the user selects on the map. Hiware Bazar (D-004) remains seeded as a working example.
+1. ~~Government-land proxy dataset~~ — resolved: OSM Overpass, exclusion-based (subtract mapped buildings/roads/water/residential/industrial zones from the bbox, treat the remainder as available). An approximation, not a survey — see `domain/land_availability.py`'s own docstring for the honest limitations.
+2. ~~Village boundary/list source~~ — superseded by the map-first, click-anywhere design: no pre-seeded list at all, villages are created on demand from wherever the user selects on the map.
 3. ~~Satellite imagery source~~ — resolved: Esri World Imagery (D-005).
+4. **Runoff method: coefficient vs. Curve Number.** Still the coefficient fallback (see `domain/runoff.py`'s own docstring), since real Curve Number needs a soil hydrologic group per cell that this app doesn't have. `land_availability.py`'s OSM data gives some land-cover signal now, but not soil type — upgrading this is a real, not-yet-started piece of work, not just a documentation gap.
+5. **Deployment target.** Nothing is live publicly yet. A VM with SSH+sudo access is the planned target (Docker Compose, per "Deployment" above); the actual deployment hasn't happened as of this writing.
