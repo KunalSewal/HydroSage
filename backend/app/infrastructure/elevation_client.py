@@ -11,6 +11,7 @@ import numpy as np
 from rasterio.io import MemoryFile
 
 from app.core.config import get_settings
+from app.infrastructure.dem_cache import DemCache
 
 
 @dataclass(frozen=True)
@@ -22,31 +23,41 @@ class BoundingBox:
 
 
 class ElevationClient:
-    def __init__(self, client: httpx.Client | None = None) -> None:
+    def __init__(self, client: httpx.Client | None = None, cache: DemCache | None = None) -> None:
         settings = get_settings()
         self._api_key = settings.opentopography_api_key
         self._client = client or httpx.Client(
             base_url=settings.opentopography_base_url, timeout=30.0
         )
+        self._cache = cache if cache is not None else DemCache.from_settings(settings)
 
     def get_dem_for_bbox(
-        self, bbox: BoundingBox, demtype: str = "COP30"
+        self, bbox: BoundingBox, demtype: str = "COP30", cache_key: str | None = None
     ) -> tuple[np.ndarray, BoundingBox]:
-        response = self._client.get(
-            "/globaldem",
-            params={
-                "demtype": demtype,
-                "south": bbox.min_lat,
-                "north": bbox.max_lat,
-                "west": bbox.min_lon,
-                "east": bbox.max_lon,
-                "outputFormat": "GTiff",
-                "API_Key": self._api_key,
-            },
-        )
-        response.raise_for_status()
+        """`cache_key` (typically a village id) lets repeat calls for the
+        same site skip OpenTopography entirely -- its free tier is 50
+        calls/day. Omit it to always fetch live, uncached."""
+        raw = self._cache.get(cache_key, demtype) if cache_key is not None else None
 
-        with MemoryFile(response.content) as memfile, memfile.open() as dataset:
+        if raw is None:
+            response = self._client.get(
+                "/globaldem",
+                params={
+                    "demtype": demtype,
+                    "south": bbox.min_lat,
+                    "north": bbox.max_lat,
+                    "west": bbox.min_lon,
+                    "east": bbox.max_lon,
+                    "outputFormat": "GTiff",
+                    "API_Key": self._api_key,
+                },
+            )
+            response.raise_for_status()
+            raw = response.content
+            if cache_key is not None:
+                self._cache.put(cache_key, demtype, raw)
+
+        with MemoryFile(raw) as memfile, memfile.open() as dataset:
             elevation = dataset.read(1).astype(np.float64)
             covered = BoundingBox(
                 min_lon=dataset.bounds.left,

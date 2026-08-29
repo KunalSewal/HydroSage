@@ -83,7 +83,7 @@ def get_elevation(village_id: str, db: Session = Depends(get_db)):
 
     client = ElevationClient()
     try:
-        mosaic, covered = client.get_dem_for_bbox(bbox)
+        mosaic, covered = client.get_dem_for_bbox(bbox, cache_key=str(village.id))
     finally:
         client.close()
 
