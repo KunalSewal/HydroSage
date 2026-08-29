@@ -21,7 +21,19 @@ export interface BoundingBox {
   max_lat: number
 }
 
-export interface ElevationData {
+// The result of the backend's catchment analysis (domain/catchment.py),
+// shared by both input flows -- click-map and KML-upload -- so a single
+// pond marker / catchment boundary UI can render either one.
+export interface CatchmentFields {
+  pond_location: { lat: number; lon: number }
+  catchment_area_m2: number
+  catchment_area_hectares: number
+  catchment_cell_count: number
+  flow_accumulation_at_pond: number
+  catchment_boundary: [number, number][] // [lon, lat], closed ring
+}
+
+export interface ElevationData extends CatchmentFields {
   village_id: string
   bbox: BoundingBox
   min_elevation: number
@@ -35,13 +47,7 @@ export interface GeocodeResult {
   lon: number
 }
 
-export interface CatchmentAnalysis {
-  pond_location: { lat: number; lon: number }
-  catchment_area_m2: number
-  catchment_area_hectares: number
-  catchment_cell_count: number
-  flow_accumulation_at_pond: number
-  catchment_boundary: [number, number][] // [lon, lat], closed ring
+export interface CatchmentAnalysis extends CatchmentFields {
   source_bbox: BoundingBox
   grid_resolution: number
   min_elevation: number

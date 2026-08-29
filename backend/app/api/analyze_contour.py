@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException, UploadFile
 from app.domain.catchment import analyze_catchment
 from app.domain.terrain import generate_contours
 from app.infrastructure.kml_parser import DEFAULT_GRID_SIZE, parse_contour_kml
-from app.schemas.catchment import BoundingBoxOut, CatchmentAnalysisOut
+from app.schemas.catchment import BoundingBoxOut, CatchmentAnalysisOut, catchment_fields
 
 router = APIRouter(tags=["analyze-contour"])
 
@@ -27,12 +27,7 @@ async def analyze_contour(file: UploadFile):
     contours = generate_contours(elevation, bbox)
 
     return CatchmentAnalysisOut(
-        pond_location={"lat": result.pond_lat, "lon": result.pond_lon},
-        catchment_area_m2=result.catchment_area_m2,
-        catchment_area_hectares=result.catchment_area_m2 / 10_000,
-        catchment_cell_count=result.catchment_cell_count,
-        flow_accumulation_at_pond=result.flow_accumulation_at_pond,
-        catchment_boundary=result.catchment_boundary,
+        **catchment_fields(result).model_dump(),
         source_bbox=BoundingBoxOut(
             min_lon=bbox.min_lon, min_lat=bbox.min_lat, max_lon=bbox.max_lon, max_lat=bbox.max_lat
         ),

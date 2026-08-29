@@ -21,8 +21,8 @@ function App() {
   const contours = isUploadMode ? (uploadState.result?.contours ?? []) : (state.elevation?.contours ?? [])
   const catchmentBoundary = isUploadMode
     ? (uploadState.result?.catchment_boundary ?? null)
-    : null
-  const pondLocation = isUploadMode ? (uploadState.result?.pond_location ?? null) : null
+    : (state.elevation?.catchment_boundary ?? null)
+  const pondLocation = isUploadMode ? (uploadState.result?.pond_location ?? null) : (state.elevation?.pond_location ?? null)
   const fitBoundsTo = isUploadMode ? (uploadState.result?.source_bbox ?? null) : null
 
   return (

@@ -4,12 +4,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from geoalchemy2.shape import to_shape
 from sqlalchemy.orm import Session
 
+from app.domain.catchment import analyze_catchment
 from app.domain.terrain import generate_contours
 from app.infrastructure.db import get_db
 from app.infrastructure.elevation_client import BoundingBox, ElevationClient
 from app.infrastructure.geocoding_client import GeocodingClient
 from app.infrastructure.models import Village
 from app.infrastructure.village_repository import create_village, find_nearby
+from app.schemas.catchment import catchment_fields
 from app.schemas.village import BoundingBoxOut, ElevationOut, VillageCreate, VillageOut
 
 router = APIRouter(prefix="/villages", tags=["villages"])
@@ -86,8 +88,10 @@ def get_elevation(village_id: str, db: Session = Depends(get_db)):
         client.close()
 
     contours = generate_contours(mosaic, covered)
+    catchment = analyze_catchment(mosaic, covered)
 
     return ElevationOut(
+        **catchment_fields(catchment).model_dump(),
         village_id=village.id,
         bbox=BoundingBoxOut(
             min_lon=covered.min_lon,

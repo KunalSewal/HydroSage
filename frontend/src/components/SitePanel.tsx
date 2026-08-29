@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { AlertTriangle, Loader2, MapPin, Mountain } from 'lucide-react'
+import { AlertTriangle, Droplets, Loader2, MapPin, Mountain } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { SiteSelectionState } from '../hooks/useSiteSelection'
 
@@ -113,7 +113,7 @@ export default function SitePanel({ state, onAnalyze, onRetry }: SitePanelProps)
               {state.status === 'analyzing' && (
                 <div className="flex items-center gap-2 text-sm text-slate-300">
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  Fetching elevation...
+                  Analyzing terrain and catchment...
                 </div>
               )}
 
@@ -121,13 +121,27 @@ export default function SitePanel({ state, onAnalyze, onRetry }: SitePanelProps)
                 <motion.div
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
-                  className="flex items-center gap-2 rounded-md bg-slate-800 p-3 text-sm"
+                  className="flex flex-col gap-2"
                 >
-                  <Mountain className="h-4 w-4 text-emerald-400" />
-                  <span>
-                    Elevation <span data-testid="min-elevation">{minElevation}</span>m
-                    &ndash; <span data-testid="max-elevation">{maxElevation}</span>m
-                  </span>
+                  <div className="flex items-center gap-2 rounded-md bg-slate-800 p-3 text-sm">
+                    <Mountain className="h-4 w-4 text-emerald-400" />
+                    <span>
+                      Elevation <span data-testid="min-elevation">{minElevation}</span>m
+                      &ndash; <span data-testid="max-elevation">{maxElevation}</span>m
+                    </span>
+                  </div>
+                  <div className="flex items-start gap-2 rounded-md bg-slate-800 p-3 text-sm">
+                    <Droplets className="mt-0.5 h-4 w-4 text-amber-400" />
+                    <div>
+                      <p className="font-medium">Recommended pond site</p>
+                      <p className="text-xs text-slate-400">
+                        {state.elevation.pond_location.lat.toFixed(5)}, {state.elevation.pond_location.lon.toFixed(5)}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-400">
+                        Catchment area: {state.elevation.catchment_area_hectares.toFixed(1)} ha
+                      </p>
+                    </div>
+                  </div>
                 </motion.div>
               )}
             </motion.div>

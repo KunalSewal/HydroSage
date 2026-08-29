@@ -13,6 +13,12 @@ const elevation = {
   min_elevation: 250,
   max_elevation: 300,
   contours: [],
+  pond_location: { lat: 21.191, lon: 81.301 },
+  catchment_area_m2: 500_000,
+  catchment_area_hectares: 50,
+  catchment_cell_count: 400,
+  flow_accumulation_at_pond: 999,
+  catchment_boundary: [[81.29, 21.18]] as [number, number][],
 }
 
 /** A promise you can resolve/reject from outside its executor, for controlling resolution order in tests. */

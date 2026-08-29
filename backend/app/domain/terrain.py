@@ -4,12 +4,22 @@ FastAPI/DB imports — testable in isolation, per docs/ARCHITECTURE.md."""
 import math
 
 import numpy as np
+from scipy.ndimage import gaussian_filter
 from skimage import measure
 
 from app.infrastructure.elevation_client import BoundingBox
 
 _TARGET_LEVEL_COUNT = 8
 _NICE_MULTIPLES = (1, 2, 5, 10)
+_SMOOTHING_SIGMA = 1.2
+
+
+def _smooth(elevation: np.ndarray) -> np.ndarray:
+    """Lightly blurs the grid before contour tracing, the way any real topo
+    map is generalized rather than plotted straight off raw survey noise.
+    Only used for the traced line geometry -- callers should keep computing
+    reported min/max elevation stats from the original, unsmoothed array."""
+    return gaussian_filter(elevation, sigma=_SMOOTHING_SIGMA)
 
 
 def _nice_interval(z_min: float, z_max: float, target_levels: int = _TARGET_LEVEL_COUNT) -> float:
@@ -53,6 +63,7 @@ def generate_contours(
     if levels.size == 0:
         levels = np.array([(z_min + z_max) / 2])
     height, width = elevation.shape
+    smoothed = _smooth(elevation)
 
     def to_lonlat(row: float, col: float) -> list[float]:
         lon = bbox.min_lon + (col / (width - 1)) * (bbox.max_lon - bbox.min_lon)
@@ -61,7 +72,7 @@ def generate_contours(
 
     contours = []
     for level in levels:
-        for line in measure.find_contours(elevation, level=float(level)):
+        for line in measure.find_contours(smoothed, level=float(level)):
             contours.append(
                 {
                     "elevation": float(level),

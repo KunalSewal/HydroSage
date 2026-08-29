@@ -2,6 +2,8 @@ import uuid
 
 from pydantic import BaseModel, Field
 
+from app.schemas.catchment import CatchmentFieldsOut
+
 
 class VillageOut(BaseModel):
     id: uuid.UUID
@@ -29,7 +31,7 @@ class BoundingBoxOut(BaseModel):
     max_lat: float
 
 
-class ElevationOut(BaseModel):
+class ElevationOut(CatchmentFieldsOut):
     village_id: uuid.UUID
     bbox: BoundingBoxOut
     min_elevation: float
