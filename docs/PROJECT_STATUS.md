@@ -1,72 +1,77 @@
 # HydroSage — Project Status & Handoff
 
-Last updated: 2026-08-26 (end of the session that built the map UI and the Phase 1 catchment endpoint). Read this before doing anything else in a new session — it's the fastest way back to full context.
+Last updated: 2026-08-29, after the session that finished the terrain-analysis pipeline (rainfall → runoff → pond sizing → land availability), fixed a major catchment-sizing bug, and wired the results into the frontend. Read this before doing anything else in a new session.
 
-## Where the actual code lives right now — read this first
+## Where the code lives
 
-- **Main checkout:** `C:\Users\kunal\OneDrive\Desktop\CSD\HydroSage` (branch `main`) — has the original scaffold and the first backend slice (Hiware Bazar, OpenZenith-based elevation). It does **not** have the new map UI, the OpenTopography/Nominatim switch, or the catchment/KML work.
-- **Worktree:** `C:\Users\kunal\OneDrive\Desktop\CSD\HydroSage\.claude\worktrees\village-map-selection` (branch `worktree-village-map-selection`) — has **everything** built in this session: the full frontend rebuild, the elevation/geocoding provider switch, and the Phase 1 catchment-analysis endpoint. This branch is **not yet merged into `main`**.
+- `main` and `worktree-village-map-selection` are **in sync** right now — every round of work this session was fast-forward-merged into `main` immediately after landing (`git push origin worktree-village-map-selection:main`), so there's no divergence to reconcile. Keep working in the worktree; merging stays a plain fast-forward as long as `main` isn't touched independently elsewhere.
+- Git history was rewritten once this session (all commits on both branches, `git filter-branch`) to strip the `Co-Authored-By: Claude` trailer at the user's request, ahead of a presentation. New commits in this repo no longer add that trailer. If you're in a fresh session and someone asks "why does `git log` look rewritten," that's why — it was deliberate and force-pushed with explicit approval.
+- The repo is **private**, solo-owned, 0 forks — that's why the history rewrite was low-risk. Don't assume that's still true without checking (`gh repo view --json isPrivate,forkCount`) if this ever becomes a team project.
 
-**To continue tomorrow: work in the worktree, not the main checkout,** until a decision is made to merge. If a fresh session starts in the main checkout, the new work won't be visible there.
+## What this project is
 
-## What this project actually is
+A web app that recommends pond-construction sites for rural water conservation by analyzing terrain, catchment area, land availability, and rainfall (`docs/PROJECT_BRIEF.md` has the full requirements; `docs/ARCHITECTURE.md` is currently **stale**, see Open Items; `docs/DECISIONS.md` is the decision log). A separately-graded Phase 1 deliverable (`docs/private/Phase1Req.txt`, gitignored) asks specifically for a KML-upload → catchment-analysis API route with a report — this is likely the actual graded piece.
 
-A web app that recommends pond-construction sites for rural water conservation by analyzing terrain, catchment area, and rainfall (see `docs/PROJECT_BRIEF.md` for the original requirements, `docs/ARCHITECTURE.md` for design decisions, `docs/DECISIONS.md` for the full decision log — this file is a narrative summary layered on top of those, not a replacement).
+## What's built — the full pipeline, end to end
 
-Partway through this session, a second, more specific requirement surfaced: `docs/private/Phase1Req.txt` describes a separately-evaluated deliverable — a backend route that accepts an uploaded KML/KMZ contour map, identifies a suitable pond location, and estimates the catchment area, submitted with a report (GitHub link, working API URL, methodology writeup, demo, API docs). This is likely the actual graded piece, and it's a different input mode than the live-map flow (uploaded static contour data vs. a DEM fetched live from a click).
+**Backend** (`backend/app/`), organized `api/` (routers) → `domain/` (pure logic) → `infrastructure/` (external I/O), per `ARCHITECTURE.md`'s module boundaries:
 
-## What's built and verified
+| Endpoint | Does |
+|---|---|
+| `POST /villages` | Find-or-create a village from a lat/lon click (PostGIS proximity dedup + Nominatim reverse geocode) |
+| `GET /villages/{id}/elevation` | DEM (OpenTopography, MinIO-cached per village) → smoothed, elevation-colored contours → full catchment analysis (pond site + boundary + area) |
+| `POST /villages/{id}/recommend` | Everything `/elevation` has, plus rainfall (Open-Meteo, 10yr) → runoff (coefficient method) → pond depth/size options (2/3/4m) → each checked against OSM-derived available land |
+| `POST /analyzeContour` | Same catchment/contour engine, fed from an uploaded KML instead of a live DEM fetch — no rainfall/land/recommend integration (see Not Built) |
+| `GET /villages/{id}/rainfall` | Same rainfall data `/recommend` uses, standalone |
+| `GET /geocode` | Nominatim place search |
 
-### Backend (`backend/app/`)
+Two caches, both this session, both because a specific real cost was identified and verified, not speculative:
+- **DEM cache** (MinIO, `dem_cache.py`) — protects OpenTopography's 50-calls/day free tier. Verified: 14.7s cold fetch → 1.5s cached, byte-identical result.
+- **Catchment-result cache** (Redis, `catchment_cache.py`) — avoids running the D8 pipeline twice when a user does "Analyze this site" then "Get pond recommendation" for the same site. Verified via direct Redis inspection that both endpoints share one computed result.
 
-- **Village model + PostGIS migration** — from early in the session, unchanged since.
-- **`ElevationClient`** (`infrastructure/elevation_client.py`) — originally built against OpenZenith; **switched to OpenTopography's Global DEM API** after OpenZenith had a full outage mid-session, then came back flaky (see D-005 in `DECISIONS.md`). Verified live.
-- **`GeocodingClient`** (`infrastructure/geocoding_client.py`) — Nominatim, direct. Verified live (forward search + reverse).
-- **Village find-or-create repository** (`infrastructure/village_repository.py`) — `find_nearby` (PostGIS `ST_DWithin` proximity dedup) / `create_village`.
-- **`POST /villages`, `GET /villages/{id}/elevation`, `GET /geocode`** — all wired to real data, all tested against the real DB and real external APIs.
-- **CORS middleware** — was completely missing until the final whole-branch review caught it. Without it, every single frontend→backend call was silently blocked in a real browser, despite every automated test and the build passing. Fixed and verified (`main.py`).
-- **NEW — Phase 1 catchment analysis:**
-  - `domain/catchment.py` — D8 flow-direction/accumulation via `pysheds`, picks a pond site (highest flow accumulation away from the raster edge), delineates the catchment, traces its boundary as a real polygon.
-  - `infrastructure/kml_parser.py` — parses an uploaded contour KML's `<Placemark>` elevation lines, interpolates them (`scipy.interpolate.griddata`) into the same `(elevation array, BoundingBox)` shape `ElevationClient` produces, so **one catchment engine serves both input paths** (uploaded KML, or a live DEM fetch).
-  - `POST /analyzeContour` — accepts a `.kml` upload, runs both, returns JSON (`pond_location`, `catchment_area_m2`/`hectares`, `catchment_boundary`, `source_bbox`).
-  - **Verified end-to-end via real HTTP upload** of the actual sample `docs/private/contours_1m.kml` (159,113 contour points, ~4-5s to process) — real pond location, real traced boundary polygon (not a placeholder box), real catchment area.
+**The big correctness fix this session:** `domain/catchment.py`'s pond-siting used to pick the single point with the *globally* highest flow accumulation in the analyzed area — which is really "where does the biggest drainage line exit this map tile," not a farm pond's catchment. It consistently claimed 20–36% of whatever area was analyzed. Now it samples a spread of local accumulation maxima and picks the best-ranked one whose catchment area actually falls in a realistic range (1–50 hectares, grounded in Indian watershed-development literature). Real before/after: Bhilai/Durg catchment 813.8ha → 1.96ha; KML sample 178.76ha → 49.59ha. This is the single most important fix in the session — everything downstream (runoff volume, pond dimensions) was nonsensical before it and is realistic after.
 
-### Frontend (`frontend/src/`)
+**Frontend** (`frontend/src/`):
+- Contours colored by elevation (hypsometric green→red ramp) instead of one flat color, on both the click-map and KML-upload flows, with a legend (`ContourLegend.tsx`) showing what the colors mean.
+- Click-map flow: click → "Analyze this site" (contours + catchment, fast) → optional "Get pond recommendation" (rainfall/runoff/dimensions/land, slower) as a **second, explicit stage** — deliberately not bundled into one call, so browsing contours doesn't pay for rainfall+land lookups every time.
+- `useSiteSelection` models the recommendation as a sub-machine (`recommendationStatus`/`recommendation`/`recommendationError`) alongside the existing status machine, sharing its race-guard so a stale fetch from a superseded site can't clobber newer state.
+- KML-upload flow: contours + catchment boundary + pond marker + legend, but no pond-dimension recommendation (see Not Built).
 
-- Full rebuild from the default Vite template: **Tailwind CSS v4 + Framer Motion + lucide-react + Vitest**.
-- **Map-first UI:** `MapView` (Leaflet, Esri satellite basemap, click-to-select, bouncing marker via a custom `divIcon` + CSS animation, contour lines that reveal progressively rather than snapping in), `SearchBox` (place search via `/geocode`), `SitePanel` (staged status UI — `idle → locating → located → analyzing → analyzed | error` — with animated count-up elevation stats).
-- **`useGeolocation`** (opens centered on the user, falls back to Bhilai/Durg, Chhattisgarh) and **`useSiteSelection`** (the state machine driving the whole flow, with a request-id guard against race conditions — see below) hooks.
-- **User-confirmed working today** (2026-08-26): open the app → map loads → click a point → "Analyze this site" → contour lines draw onto the map → elevation range shows in the side panel. **This is the core loop and it works, live, in a real browser.**
-- **Not wired up yet:** the Phase 1 catchment/KML feature has **zero frontend** — no upload control, no way to see a catchment boundary on the map. It's a backend-only JSON API right now, verified only via Swagger/curl.
+**Verified live, real numbers, worth keeping as a reference for the report:**
+- Bhilai/Durg: 1436mm/yr rainfall → 7,043 m³/yr runoff → pond options 42–59m square at 2–4m depth → 1155ha available land nearby, all fitting.
+- KML sample: 49.59ha catchment, 281-point traced boundary.
 
-## What went wrong and got fixed (worth knowing so it doesn't get re-broken)
+## What's NOT built
 
-1. **OpenZenith outage.** The originally-chosen elevation/geocoding provider had a full API outage mid-session, then came back flaky. Switched to OpenTopography + Nominatim directly. `docs/DECISIONS.md` D-005 has the full verification trail.
-2. **A real SQLAlchemy test-isolation bug.** `tests/conftest.py`'s `db_session` fixture used a plain transaction/rollback pattern; `POST /villages`'s necessary `db.commit()` escaped it, meaning test data could leak permanently into the shared dev DB and silently corrupt later runs. Fixed with the standard SAVEPOINT pattern (`connection.begin_nested()` + an `after_transaction_end` listener).
-3. **An async race condition in `useSiteSelection`.** Two quick map clicks (or a retry) could let a stale, slower-resolving response overwrite state a newer, faster call had already set. Fixed with a request-id guard shared across `selectPoint`/`analyze`; regression-tested by deliberately resolving calls out of order.
-4. **The map never actually recentered.** `react-leaflet`'s `<MapContainer center={...}>` only uses `center` to instantiate the map on mount — not reactive. Geolocation resolving, or selecting a new site, never panned the camera. Fixed with a `RecenterOnChange` child component (`useMap()` + `flyTo`).
-5. **CORS was completely missing** (see above) — the single most consequential bug, caught only because a final whole-branch review happened at all.
-6. **Two stale/duplicate local servers caused real confusion today.** A Docker container (`hydrosage-api-1`) had been running for 25 hours on port 8000 — the frontend's default backend URL — serving code from *before* essentially all of today's backend work. Separately, a leftover Vite dev server (started by an implementer agent checking for boot errors, never cleaned up) was squatting on port 5173. Both were stopped; the current backend now runs cleanly on `:8000`, the current frontend on `:5173`. **If things look stale again, check `netstat`/`docker ps` for zombies before assuming the code is wrong.**
-7. **`pysheds` 0.5 (latest release) calls `numpy.in1d`,** which recent `numpy` removed. Small compatibility shim added (`np.in1d = np.isin`) in `domain/catchment.py`.
-8. **Catchment-boundary polygon tracing silently fell back to a crude 4-corner box, twice**, from two separate `pysheds` API misuses (a bare array passed where a `Raster` was required; then a `nodata` dtype mismatch between a float DEM viewfinder and an int mask). Both found by actually testing against the real sample KML rather than trusting the code — now traces a genuine several-hundred-point polygon.
+- **KML-upload flow has no rainfall/runoff/pond-dimension recommendation.** It has no "village" row to hang a rainfall/land lookup off — doing this means calling `RainfallClient`/`LandUseClient` directly against the KML's own centroid coordinates, real backend work, not frontend wiring.
+- **Nothing is deployed anywhere.** Phase 1 explicitly requires a working, publicly-reachable API URL. This literally has not been started.
+- **Phase 1's report deliverables** — GitHub link, methodology writeup, demo, API docs beyond auto-generated Swagger.
+- **The async job-queue question is unresolved.** `DECISIONS.md` D-001 explicitly decided to keep Celery+Redis specifically because D8 catchment delineation is CPU-heavy — but everything built this session runs synchronously inline, and it's been fine at this scale (the slowest observed request was ~22s, only when Overpass was degrading). Either build the job queue for real, or write a new decision entry formally superseding D-001's "keep Celery" call with what actually got built and why it's held up fine.
+- **`ARCHITECTURE.md` is badly stale** — still describes an async job pipeline that was never built this way, and predates rainfall, `/recommend`, land-use, and both caches entirely. Needs a real pass, not a patch.
 
-## Open items — what's next
+**Carried over from earlier sessions, still open (lower priority, real but minor):**
+- No "locate me" button on the map.
+- `App.tsx`'s `markerPosition` derives from `state.village` (post-network) instead of `state.lastPoint` (synchronous) — causes a beat of lag after a click. One-line fix, never applied.
+- `api/client.ts`'s `parseOrThrow` doesn't handle non-string Pydantic `detail` or non-JSON error bodies — ugly error text in edge cases.
+- `useSiteSelection` double-fetches under React StrictMode in dev (harmless in prod; now largely mitigated by DEM caching anyway).
+- `SearchBox` has no error handling for a failed place search.
 
-**From the final whole-branch review, not yet fixed:**
-- No "locate me" button — the spec calls for one twice, it was never built (a plan gap, not caught until the final review).
-- The marker/map don't move until the reverse-geocode round-trip finishes (a beat of nothing happening after a click). One-line fix: `App.tsx`'s `markerPosition` should derive from `state.lastPoint` (already exists, set synchronously) instead of `state.village` (only populated after the network call resolves).
-- Failure responses render badly in the panel — `[object Object]` for a Pydantic validation error, a raw JSON-parse error message for a 500. `api/client.ts`'s `parseOrThrow` needs to handle non-string `detail` and non-JSON bodies.
-- `useSiteSelection.analyze()` fires two API calls per click in dev (React `StrictMode` double-invokes the `setState` updater it's called from) — halves the effective OpenTopography daily quota during development. Fix: move the network call out of the `setState` updater.
-- `docs/ARCHITECTURE.md` is stale — still describes the original OpenZenith-based pipeline, doesn't mention `/geocode`, `POST /villages`, or CORS.
+## Where to work next (real options, not a fixed order — ask the user)
 
-**On the catchment methodology (discussed with the user, explicitly deferred):**
-- Picking the single point with the *globally* highest flow accumulation tends to grab a very large share of the whole surveyed area as "the catchment" (on the sample KML: ~36% of the entire survey, ~179–311 hectares depending on grid resolution) — that's mathematically correct but not really "a farm pond's catchment." Worth a size constraint or a local-maxima approach later.
-- The result is meaningfully sensitive to the interpolation grid resolution (179ha at 300×300 vs. 311ha at 200×200 on the same input) — worth understanding/stabilizing before this goes in a report as a methodology.
+1. **Deployment** — arguably the highest-leverage next step: Phase 1 is graded partly on a working API URL, and nothing is live.
+2. **KML-flow recommendation parity** — give the upload flow the same rainfall/runoff/pond-sizing/land-check the click-map flow has.
+3. **Report writing** — much easier now that the pipeline is complete and numbers are realistic; the methodology (esp. the catchment-sizing fix) is genuinely worth writing up honestly.
+4. **`ARCHITECTURE.md` refresh + the job-queue decision** — affects "system design" grading, not urgent functionally.
+5. **Frontend polish backlog** (above).
+6. **Runoff: coefficient → real SCS Curve Number.** More feasible now that `land_availability.py` exists (some land-cover signal), though CN also needs soil hydrologic group data this app still doesn't have.
+7. **KML-flow's contour precision issue** (flagged early, never revisited): the KML's own precise ground-survey contour lines get thrown away and reinterpolated through a lossy 300×300 grid before being re-traced, purely for the sake of code reuse with the DEM path. Fixable without much complexity, just never prioritized.
 
-**Not started:**
-- Any frontend for the catchment/KML feature — no upload control, no boundary-on-map visualization.
-- Phase 1's actual deliverables: the report itself (GitHub link, working API URL, methodology writeup, demo), API documentation beyond the auto-generated Swagger.
-- A decision on the worktree branch: keep building on it, or merge into `main`. The final review's verdict was "ready to merge, with fixes" — the fixes above are the "with fixes" part.
+## Known environment quirks (don't waste time rediscovering these)
+
+- **Host vs. Docker hostnames:** `.env` uses Docker-network hostnames (`postgis`, `minio`, `redis`) for the containerized `api`/`worker` services. Running the backend directly on the host (as this session did throughout, via `uvicorn` outside Docker) needs `DATABASE_URL`, `OBJECT_STORAGE_ENDPOINT`, and `REDIS_URL` overridden to `localhost` equivalents — see the exact command below.
+- **`overpass-api.de` is unreachable from this dev sandbox specifically** (connection timeout, not a DNS or code issue — confirmed general internet access works fine otherwise). `overpass.openstreetmap.fr` works as a substitute for local testing (`OVERPASS_BASE_URL=https://overpass.openstreetmap.fr`). The shipped default stays `overpass-api.de` per the documented architecture — this is very likely a quirk of this specific sandbox's network egress, not something to "fix" in the app itself. The app already degrades gracefully (returns `null` availability) if Overpass is unreachable in any environment, so this isn't a functional risk either way.
+- **Overpass mirrors reject a generic User-Agent** (403) — `land_use_client.py` already sends a descriptive one; if you swap providers/mirrors again, check this first if you get an unexplained 403.
+- **`git filter-branch` runs from PowerShell need absolute paths** for `--msg-filter` scripts — a relative path silently fails to resolve depending on what working directory the internal `sh -c` invocation uses.
 
 ## How to resume
 
@@ -76,13 +81,15 @@ cd "C:\Users\kunal\OneDrive\Desktop\CSD\HydroSage\.claude\worktrees\village-map-
 
 Backend (from `backend/`, venv active):
 ```
-DATABASE_URL=postgresql+psycopg://hydrosage:hydrosage@localhost:5432/hydrosage uvicorn app.main:app --port 8000 --reload
+DATABASE_URL=postgresql+psycopg://hydrosage:hydrosage@localhost:5432/hydrosage OBJECT_STORAGE_ENDPOINT=localhost:9000 REDIS_URL=redis://localhost:6379/0 uvicorn app.main:app --port 8000 --reload
 ```
 
 Frontend (from `frontend/`):
 ```
 npm run dev
 ```
-Opens on `:5173` by default — matches the CORS allowlist in `backend/app/main.py`. If port 5173 or 8000 is already occupied when you start these, check what's actually listening there first (`netstat -ano | grep <port>`, `docker ps`) rather than assuming it's already the right thing — see open item #6 above.
+Opens on `:5173`, matches the CORS allowlist in `backend/app/main.py`.
 
-Docker: `postgis`, `redis`, `minio` should already be running (`docker compose ps`). The old `api`/`worker` containers were deliberately stopped (stale code) — don't restart them without rebuilding (`docker compose up -d --build api worker`) first, and be aware of the Docker Compose project-name/port-conflict risk documented in the SDD ledger (`.superpowers/sdd/2026-08-26-village-map-selection/progress.md`) if running from this worktree directory.
+Docker: `postgis`, `redis`, `minio` should already be running (`docker compose ps`; if not, `docker compose up -d postgis redis minio` — Docker Desktop itself needs to be running first on Windows). The `api`/`worker` containers are deliberately not used this session (everything ran on the host instead) — don't assume they're up to date if you start them.
+
+Tests: `pytest -q` (backend), `npx vitest run` (frontend). Integration tests hitting live external APIs are gated behind `RUN_INTEGRATION_TESTS=1` and skipped by default — run them explicitly (with the host-vs-Docker env overrides above) before trusting a change to any external client.
