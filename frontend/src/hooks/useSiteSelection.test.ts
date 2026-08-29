@@ -1,4 +1,5 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
+import { StrictMode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as client from '../api/client'
 import { useSiteSelection } from './useSiteSelection'
@@ -210,6 +211,34 @@ describe('useSiteSelection', () => {
 
     expect(result.current.state.recommendationStatus).toBe('error')
     expect(result.current.state.recommendationError).toBe('recommendation service unavailable')
+  })
+
+  it('analyze does not double-fetch under React StrictMode', async () => {
+    // StrictMode double-invokes functions passed to setState as a
+    // functional update, to help catch impure updaters. analyze() used to
+    // call getElevation() from inside one of those, silently doubling
+    // every OpenTopography call in development. Regression test for that.
+    const { result } = renderHook(() => useSiteSelection(), { wrapper: StrictMode })
+    await act(() => result.current.selectPoint(21.19, 81.3))
+    await waitFor(() => expect(result.current.state.status).toBe('located'))
+
+    await act(() => result.current.analyze())
+
+    await waitFor(() => expect(result.current.state.status).toBe('analyzed'))
+    expect(client.getElevation).toHaveBeenCalledOnce()
+  })
+
+  it('getFullRecommendation does not double-fetch under React StrictMode', async () => {
+    const { result } = renderHook(() => useSiteSelection(), { wrapper: StrictMode })
+    await act(() => result.current.selectPoint(21.19, 81.3))
+    await waitFor(() => expect(result.current.state.status).toBe('located'))
+    await act(() => result.current.analyze())
+    await waitFor(() => expect(result.current.state.status).toBe('analyzed'))
+
+    await act(() => result.current.getFullRecommendation())
+
+    await waitFor(() => expect(result.current.state.recommendationStatus).toBe('done'))
+    expect(client.getRecommendation).toHaveBeenCalledOnce()
   })
 
   it('selecting a new point resets any prior recommendation', async () => {

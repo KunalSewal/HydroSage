@@ -1,4 +1,4 @@
-import { Search } from 'lucide-react'
+import { Loader2, Search } from 'lucide-react'
 import { useState } from 'react'
 import { searchPlaces } from '../api/client'
 
@@ -6,15 +6,28 @@ interface SearchBoxProps {
   onResultSelected: (lat: number, lon: number) => void
 }
 
+type Status = 'idle' | 'searching' | 'no-results' | 'error'
+
 export default function SearchBox({ onResultSelected }: SearchBoxProps) {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<{ display_name: string; lat: number; lon: number }[]>([])
+  const [status, setStatus] = useState<Status>('idle')
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault()
     if (!query.trim()) return
-    const found = await searchPlaces(query)
-    setResults(found)
+    setStatus('searching')
+    setErrorMessage(null)
+    try {
+      const found = await searchPlaces(query)
+      setResults(found)
+      setStatus(found.length === 0 ? 'no-results' : 'idle')
+    } catch (error) {
+      setResults([])
+      setStatus('error')
+      setErrorMessage(error instanceof Error ? error.message : 'search failed')
+    }
   }
 
   return (
@@ -23,7 +36,11 @@ export default function SearchBox({ onResultSelected }: SearchBoxProps) {
         onSubmit={handleSubmit}
         className="flex items-center gap-2 rounded-md bg-slate-900/90 px-3 py-2 text-slate-100 shadow-lg backdrop-blur"
       >
-        <Search className="h-4 w-4 text-slate-400" />
+        {status === 'searching' ? (
+          <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
+        ) : (
+          <Search className="h-4 w-4 text-slate-400" />
+        )}
         <input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
@@ -40,6 +57,7 @@ export default function SearchBox({ onResultSelected }: SearchBoxProps) {
                 onClick={() => {
                   onResultSelected(result.lat, result.lon)
                   setResults([])
+                  setStatus('idle')
                   setQuery(result.display_name)
                 }}
                 className="block w-full px-3 py-2 text-left hover:bg-slate-800"
@@ -49,6 +67,14 @@ export default function SearchBox({ onResultSelected }: SearchBoxProps) {
             </li>
           ))}
         </ul>
+      )}
+      {status === 'no-results' && (
+        <p className="mt-1 rounded-md bg-slate-900/95 px-3 py-2 text-sm text-slate-400 shadow-lg">
+          No places found for "{query}".
+        </p>
+      )}
+      {status === 'error' && (
+        <p className="mt-1 rounded-md bg-red-950/90 px-3 py-2 text-sm text-red-200 shadow-lg">{errorMessage}</p>
       )}
     </div>
   )

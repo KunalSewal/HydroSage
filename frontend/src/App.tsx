@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import LocateButton from './components/LocateButton'
 import MapView from './components/MapView'
 import SearchBox from './components/SearchBox'
 import SitePanel from './components/SitePanel'
@@ -11,13 +12,16 @@ type Mode = 'click' | 'upload'
 
 function App() {
   const [mode, setMode] = useState<Mode>('click')
-  const { position } = useGeolocation()
+  const { position, status: geoStatus, locate } = useGeolocation()
   const { state, selectPoint, analyze, getFullRecommendation } = useSiteSelection()
   const { state: uploadState, upload, reset: resetUpload } = useContourUpload()
 
   const isUploadMode = mode === 'upload' && uploadState.result !== null
 
-  const markerPosition = !isUploadMode && state.village ? { lat: state.village.lat, lon: state.village.lon } : null
+  // state.lastPoint is set synchronously on click, before the reverse-geocode
+  // round-trip resolves -- deriving from state.village instead left a beat of
+  // nothing happening after every click while that request was in flight.
+  const markerPosition = !isUploadMode ? state.lastPoint : null
   const contours = isUploadMode ? (uploadState.result?.contours ?? []) : (state.elevation?.contours ?? [])
   const catchmentBoundary = isUploadMode
     ? (uploadState.result?.catchment_boundary ?? null)
@@ -38,6 +42,7 @@ function App() {
           fitBoundsTo={fitBoundsTo}
         />
         {mode === 'click' && <SearchBox onResultSelected={selectPoint} />}
+        {mode === 'click' && <LocateButton onClick={locate} status={geoStatus} />}
       </div>
 
       <div className="flex h-full w-80 flex-col gap-4 bg-slate-900/90 p-6 text-slate-100 backdrop-blur">

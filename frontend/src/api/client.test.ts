@@ -33,6 +33,35 @@ describe('api client', () => {
     await expect(getElevation('missing-id')).rejects.toThrow('village not found')
   })
 
+  it('extracts a readable message from a Pydantic validation error (detail is an array, not a string)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 422,
+        json: () =>
+          Promise.resolve({
+            detail: [{ loc: ['body', 'lat'], msg: 'Input should be a valid number', type: 'float_parsing' }],
+          }),
+      }),
+    )
+
+    await expect(getElevation('some-id')).rejects.toThrow('Input should be a valid number')
+  })
+
+  it('falls back to a status-based message when the response body is not JSON at all', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 502,
+        json: () => Promise.reject(new SyntaxError('Unexpected token < in JSON')),
+      }),
+    )
+
+    await expect(getElevation('some-id')).rejects.toThrow('502')
+  })
+
   it('searchPlaces returns parsed results', async () => {
     const results = [{ display_name: 'Bhilai, Chhattisgarh', lat: 21.19, lon: 81.35 }]
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(results) }))

@@ -79,11 +79,39 @@ export interface Recommendation extends RecommendationFields {
 }
 
 async function parseOrThrow<T>(response: Response): Promise<T> {
-  const body = await response.json()
+  let body: unknown = null
+  try {
+    body = await response.json()
+  } catch {
+    // Not a JSON body at all -- a raw 502/504 from a proxy, an empty
+    // response, etc. Fall through to the status-based message below
+    // rather than surfacing a raw JSON.parse error to the user.
+  }
+
   if (!response.ok) {
-    throw new Error(body.detail ?? `request failed with status ${response.status}`)
+    throw new Error(extractErrorMessage(body) ?? `request failed with status ${response.status}`)
   }
   return body as T
+}
+
+// FastAPI's `detail` is a plain string for a hand-raised HTTPException, but
+// a list of {msg, loc, type} objects for a Pydantic validation error (422)
+// -- passing that array straight to `new Error()` used to render as the
+// unhelpful literal "[object Object]" in the UI.
+function extractErrorMessage(body: unknown): string | null {
+  if (body === null || typeof body !== 'object' || !('detail' in body)) return null
+  const detail = (body as { detail: unknown }).detail
+
+  if (typeof detail === 'string') return detail
+
+  if (Array.isArray(detail)) {
+    const messages = detail
+      .map((item) => (item && typeof item === 'object' && 'msg' in item ? String((item as { msg: unknown }).msg) : null))
+      .filter((msg): msg is string => msg !== null)
+    if (messages.length > 0) return messages.join('; ')
+  }
+
+  return null
 }
 
 export async function listVillages(): Promise<Village[]> {

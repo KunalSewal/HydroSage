@@ -36,6 +36,10 @@ export function useSiteSelection() {
   // in-flight recommendation fetch for the site it superseded, same as it
   // already invalidates an in-flight analyze() call.
   const requestId = useRef(0)
+  // Mirrors `state` for synchronous reads inside analyze()/getFullRecommendation()
+  // -- see the comment on those below for why this exists.
+  const stateRef = useRef(state)
+  stateRef.current = state
 
   const selectPoint = useCallback(async (lat: number, lon: number) => {
     const id = ++requestId.current
@@ -62,48 +66,53 @@ export function useSiteSelection() {
     }
   }, [])
 
+  // The network call is deliberately outside the setState updater (reading
+  // current state via stateRef instead of a functional update) -- React
+  // StrictMode double-invokes updater functions passed to setState in dev,
+  // and this used to fire getElevation() from inside one, silently doubling
+  // every OpenTopography call during development.
   const analyze = useCallback(() => {
-    setState((prev) => {
-      if (prev.status !== 'located' || !prev.village) return prev
-      const id = ++requestId.current
-      const village = prev.village
-      getElevation(village.id)
-        .then((elevation) => {
-          if (id !== requestId.current) return
-          setState((current) => ({ ...current, status: 'analyzed', elevation }))
-        })
-        .catch((error: unknown) => {
-          if (id !== requestId.current) return
-          setState((current) => ({
-            ...current,
-            status: 'error',
-            errorMessage: error instanceof Error ? error.message : 'something went wrong',
-          }))
-        })
-      return { ...prev, status: 'analyzing', errorMessage: null }
-    })
+    const current = stateRef.current
+    if (current.status !== 'located' || !current.village) return
+    const id = ++requestId.current
+    const village = current.village
+
+    setState((prev) => ({ ...prev, status: 'analyzing', errorMessage: null }))
+    getElevation(village.id)
+      .then((elevation) => {
+        if (id !== requestId.current) return
+        setState((prev) => ({ ...prev, status: 'analyzed', elevation }))
+      })
+      .catch((error: unknown) => {
+        if (id !== requestId.current) return
+        setState((prev) => ({
+          ...prev,
+          status: 'error',
+          errorMessage: error instanceof Error ? error.message : 'something went wrong',
+        }))
+      })
   }, [])
 
   const getFullRecommendation = useCallback(() => {
-    setState((prev) => {
-      if (prev.status !== 'analyzed' || !prev.village) return prev
-      const id = ++requestId.current
-      const village = prev.village
-      getRecommendation(village.id)
-        .then((recommendation) => {
-          if (id !== requestId.current) return
-          setState((current) => ({ ...current, recommendationStatus: 'done', recommendation }))
-        })
-        .catch((error: unknown) => {
-          if (id !== requestId.current) return
-          setState((current) => ({
-            ...current,
-            recommendationStatus: 'error',
-            recommendationError: error instanceof Error ? error.message : 'something went wrong',
-          }))
-        })
-      return { ...prev, recommendationStatus: 'loading', recommendationError: null }
-    })
+    const current = stateRef.current
+    if (current.status !== 'analyzed' || !current.village) return
+    const id = ++requestId.current
+    const village = current.village
+
+    setState((prev) => ({ ...prev, recommendationStatus: 'loading', recommendationError: null }))
+    getRecommendation(village.id)
+      .then((recommendation) => {
+        if (id !== requestId.current) return
+        setState((prev) => ({ ...prev, recommendationStatus: 'done', recommendation }))
+      })
+      .catch((error: unknown) => {
+        if (id !== requestId.current) return
+        setState((prev) => ({
+          ...prev,
+          recommendationStatus: 'error',
+          recommendationError: error instanceof Error ? error.message : 'something went wrong',
+        }))
+      })
   }, [])
 
   return { state, selectPoint, analyze, getFullRecommendation }
