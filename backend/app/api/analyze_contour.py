@@ -4,6 +4,7 @@ from app.domain.catchment import analyze_catchment
 from app.domain.terrain import generate_contours
 from app.infrastructure.kml_parser import DEFAULT_GRID_SIZE, parse_contour_kml
 from app.schemas.catchment import BoundingBoxOut, CatchmentAnalysisOut, catchment_fields
+from app.services.recommendation import compute_recommendation_fields
 
 router = APIRouter(tags=["analyze-contour"])
 
@@ -26,8 +27,17 @@ async def analyze_contour(file: UploadFile):
     result = analyze_catchment(elevation, bbox)
     contours = generate_contours(elevation, bbox)
 
+    # No "village" for an uploaded survey to hang a rainfall/land lookup off
+    # -- use the bbox's own centroid, same idea as reverse-geocoding a click.
+    centroid_lat = (bbox.min_lat + bbox.max_lat) / 2
+    centroid_lon = (bbox.min_lon + bbox.max_lon) / 2
+    recommendation_fields = compute_recommendation_fields(
+        centroid_lat, centroid_lon, bbox, result.catchment_area_m2
+    )
+
     return CatchmentAnalysisOut(
         **catchment_fields(result).model_dump(),
+        **recommendation_fields.model_dump(),
         source_bbox=BoundingBoxOut(
             min_lon=bbox.min_lon, min_lat=bbox.min_lat, max_lon=bbox.max_lon, max_lat=bbox.max_lat
         ),

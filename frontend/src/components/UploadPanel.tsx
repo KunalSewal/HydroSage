@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { AlertTriangle, Droplets, Loader2, UploadCloud } from 'lucide-react'
+import { AlertTriangle, CloudRain, Droplets, Loader2, Ruler, UploadCloud } from 'lucide-react'
 import { useRef } from 'react'
 import type { ContourUploadState } from '../hooks/useContourUpload'
 import ContourLegend from './ContourLegend'
@@ -77,6 +77,39 @@ export default function UploadPanel({ state, onUpload, onReset }: UploadPanelPro
                 </p>
               </div>
             </div>
+
+            <div className="flex flex-col gap-2 rounded-md bg-slate-800 p-3 text-sm">
+              <div className="flex items-center gap-2">
+                <CloudRain className="h-4 w-4 text-sky-400" />
+                <span>
+                  {Math.round(state.result.average_annual_rainfall_mm)}mm/yr avg rainfall &rarr;{' '}
+                  {Math.round(state.result.runoff_volume_m3).toLocaleString()} m&sup3; runoff/yr
+                </span>
+              </div>
+              <div className="flex items-start gap-2">
+                <Ruler className="mt-0.5 h-4 w-4 text-emerald-400" />
+                <div className="flex flex-col gap-1">
+                  <span className="text-xs text-slate-400">Pond size options (storage = annual runoff):</span>
+                  {state.result.pond_options.map((option) => (
+                    <div key={option.depth_m} className="flex items-center gap-1.5 text-xs">
+                      <span className="font-medium text-slate-200">
+                        {option.depth_m}m deep &times; {Math.round(option.side_length_m)}m square
+                      </span>
+                      {option.fits_available_land === false && (
+                        <span className="text-amber-400">(exceeds available land nearby)</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+              {state.result.available_land_hectares !== null && (
+                <p className="text-xs text-slate-500">
+                  ~{state.result.available_land_hectares.toFixed(1)} ha of land available nearby (excluding
+                  buildings, roads, and water bodies)
+                </p>
+              )}
+            </div>
+
             <button
               type="button"
               onClick={onReset}

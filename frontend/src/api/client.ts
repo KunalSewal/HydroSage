@@ -47,14 +47,6 @@ export interface GeocodeResult {
   lon: number
 }
 
-export interface CatchmentAnalysis extends CatchmentFields {
-  source_bbox: BoundingBox
-  grid_resolution: number
-  min_elevation: number
-  max_elevation: number
-  contours: Contour[]
-}
-
 export interface PondOption {
   depth_m: number
   surface_area_m2: number
@@ -62,14 +54,28 @@ export interface PondOption {
   fits_available_land: boolean | null
 }
 
-export interface Recommendation {
-  village_id: string
-  catchment_area_hectares: number
+// Rainfall -> runoff -> pond sizing -> land-availability, shared by both
+// flows that compute it (the click-map /recommend endpoint and the
+// KML-upload /analyzeContour endpoint), same reasoning as CatchmentFields.
+export interface RecommendationFields {
   average_annual_rainfall_mm: number
   runoff_volume_m3: number
   runoff_coefficient: number
   pond_options: PondOption[]
   available_land_hectares: number | null
+}
+
+export interface CatchmentAnalysis extends CatchmentFields, RecommendationFields {
+  source_bbox: BoundingBox
+  grid_resolution: number
+  min_elevation: number
+  max_elevation: number
+  contours: Contour[]
+}
+
+export interface Recommendation extends RecommendationFields {
+  village_id: string
+  catchment_area_hectares: number
 }
 
 async function parseOrThrow<T>(response: Response): Promise<T> {

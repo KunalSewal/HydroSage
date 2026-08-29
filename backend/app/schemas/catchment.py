@@ -1,6 +1,7 @@
 from pydantic import BaseModel
 
 from app.domain.catchment import CatchmentResult
+from app.schemas.recommend import RecommendationFieldsOut
 
 
 class BoundingBoxOut(BaseModel):
@@ -28,7 +29,7 @@ class CatchmentFieldsOut(BaseModel):
     catchment_boundary: list[list[float]]  # [[lon, lat], ...], closed ring
 
 
-class CatchmentAnalysisOut(CatchmentFieldsOut):
+class CatchmentAnalysisOut(CatchmentFieldsOut, RecommendationFieldsOut):
     source_bbox: BoundingBoxOut
     grid_resolution: int
     min_elevation: float

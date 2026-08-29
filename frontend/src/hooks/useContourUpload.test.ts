@@ -17,6 +17,11 @@ const analysis = {
   min_elevation: 267,
   max_elevation: 298,
   contours: [],
+  average_annual_rainfall_mm: 1415.2,
+  runoff_volume_m3: 175442.6,
+  runoff_coefficient: 0.25,
+  pond_options: [{ depth_m: 3, surface_area_m2: 58466, side_length_m: 241.8, fits_available_land: true }],
+  available_land_hectares: 741.8,
 }
 
 function deferred<T>() {
