@@ -6,11 +6,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from geoalchemy2.shape import to_shape
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.domain.catchment import analyze_catchment
 from app.domain.land_availability import LandAvailabilityResult, estimate_available_land
 from app.domain.pond import recommend_pond_dimensions
 from app.domain.rainfall import summarize_rainfall
 from app.domain.runoff import estimate_annual_runoff_volume
+from app.infrastructure.catchment_cache import CatchmentCache
 from app.infrastructure.db import get_db
 from app.infrastructure.elevation_client import BoundingBox, ElevationClient
 from app.infrastructure.land_use_client import LandUseClient
@@ -64,7 +66,8 @@ def get_recommendation(village_id: str, db: Session = Depends(get_db)):
         mosaic, covered = elevation_client.get_dem_for_bbox(bbox, cache_key=str(village.id))
     finally:
         elevation_client.close()
-    catchment = analyze_catchment(mosaic, covered)
+    catchment_cache = CatchmentCache.from_settings(get_settings())
+    catchment = catchment_cache.get_or_compute(str(village.id), lambda: analyze_catchment(mosaic, covered))
 
     centroid = to_shape(village.centroid)
     end_year = date.today().year - 1

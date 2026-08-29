@@ -4,8 +4,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from geoalchemy2.shape import to_shape
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.domain.catchment import analyze_catchment
 from app.domain.terrain import generate_contours
+from app.infrastructure.catchment_cache import CatchmentCache
 from app.infrastructure.db import get_db
 from app.infrastructure.elevation_client import BoundingBox, ElevationClient
 from app.infrastructure.geocoding_client import GeocodingClient
@@ -88,7 +90,8 @@ def get_elevation(village_id: str, db: Session = Depends(get_db)):
         client.close()
 
     contours = generate_contours(mosaic, covered)
-    catchment = analyze_catchment(mosaic, covered)
+    catchment_cache = CatchmentCache.from_settings(get_settings())
+    catchment = catchment_cache.get_or_compute(str(village.id), lambda: analyze_catchment(mosaic, covered))
 
     return ElevationOut(
         **catchment_fields(catchment).model_dump(),
