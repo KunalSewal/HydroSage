@@ -55,6 +55,23 @@ export interface CatchmentAnalysis extends CatchmentFields {
   contours: Contour[]
 }
 
+export interface PondOption {
+  depth_m: number
+  surface_area_m2: number
+  side_length_m: number
+  fits_available_land: boolean | null
+}
+
+export interface Recommendation {
+  village_id: string
+  catchment_area_hectares: number
+  average_annual_rainfall_mm: number
+  runoff_volume_m3: number
+  runoff_coefficient: number
+  pond_options: PondOption[]
+  available_land_hectares: number | null
+}
+
 async function parseOrThrow<T>(response: Response): Promise<T> {
   const body = await response.json()
   if (!response.ok) {
@@ -92,4 +109,9 @@ export async function analyzeContourFile(file: File): Promise<CatchmentAnalysis>
   formData.append('file', file)
   const response = await fetch(`${API_BASE}/analyzeContour`, { method: 'POST', body: formData })
   return parseOrThrow<CatchmentAnalysis>(response)
+}
+
+export async function getRecommendation(villageId: string): Promise<Recommendation> {
+  const response = await fetch(`${API_BASE}/villages/${villageId}/recommend`, { method: 'POST' })
+  return parseOrThrow<Recommendation>(response)
 }

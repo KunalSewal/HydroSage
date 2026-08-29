@@ -30,3 +30,10 @@ function lerp(a: [number, number, number], b: [number, number, number], t: numbe
 function rgbToCss([r, g, b]: [number, number, number]): string {
   return `rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`
 }
+
+// Built from the same RAMP stops contourColor uses, so a legend can never
+// visually drift from what the actual contour lines are colored.
+export function contourGradientCss(): string {
+  const stops = RAMP.map(([t, rgb]) => `${rgbToCss(rgb)} ${Math.round(t * 100)}%`)
+  return `linear-gradient(to right, ${stops.join(', ')})`
+}

@@ -1,12 +1,14 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { AlertTriangle, Droplets, Loader2, MapPin, Mountain } from 'lucide-react'
+import { AlertTriangle, CloudRain, Droplets, Loader2, MapPin, Mountain, Ruler } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { SiteSelectionState } from '../hooks/useSiteSelection'
+import ContourLegend from './ContourLegend'
 
 interface SitePanelProps {
   state: SiteSelectionState
   onAnalyze: () => void
   onRetry: () => void
+  onGetRecommendation: () => void
 }
 
 // Counts up to each of `targets` over `durationMs` instead of snapping
@@ -47,7 +49,7 @@ function useCountUp(targets: number[], durationMs = 600): number[] {
   return values
 }
 
-export default function SitePanel({ state, onAnalyze, onRetry }: SitePanelProps) {
+export default function SitePanel({ state, onAnalyze, onRetry, onGetRecommendation }: SitePanelProps) {
   const [minElevation, maxElevation] = useCountUp([
     state.elevation ? Math.round(state.elevation.min_elevation) : 0,
     state.elevation ? Math.round(state.elevation.max_elevation) : 0,
@@ -130,6 +132,7 @@ export default function SitePanel({ state, onAnalyze, onRetry }: SitePanelProps)
                       &ndash; <span data-testid="max-elevation">{maxElevation}</span>m
                     </span>
                   </div>
+                  <ContourLegend minElevation={state.elevation.min_elevation} maxElevation={state.elevation.max_elevation} />
                   <div className="flex items-start gap-2 rounded-md bg-slate-800 p-3 text-sm">
                     <Droplets className="mt-0.5 h-4 w-4 text-amber-400" />
                     <div>
@@ -142,6 +145,65 @@ export default function SitePanel({ state, onAnalyze, onRetry }: SitePanelProps)
                       </p>
                     </div>
                   </div>
+
+                  {state.recommendationStatus === 'idle' && (
+                    <button
+                      type="button"
+                      onClick={onGetRecommendation}
+                      className="rounded-md bg-slate-800 px-3 py-2 text-sm font-medium text-slate-200 hover:bg-slate-700"
+                    >
+                      Get pond recommendation
+                    </button>
+                  )}
+
+                  {state.recommendationStatus === 'loading' && (
+                    <div className="flex items-center gap-2 text-sm text-slate-300">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Fetching rainfall, runoff, and pond sizing...
+                    </div>
+                  )}
+
+                  {state.recommendationStatus === 'error' && (
+                    <p className="text-xs text-red-300">{state.recommendationError}</p>
+                  )}
+
+                  {state.recommendationStatus === 'done' && state.recommendation && (
+                    <motion.div
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      className="flex flex-col gap-2 rounded-md bg-slate-800 p-3 text-sm"
+                    >
+                      <div className="flex items-center gap-2">
+                        <CloudRain className="h-4 w-4 text-sky-400" />
+                        <span>
+                          {Math.round(state.recommendation.average_annual_rainfall_mm)}mm/yr avg rainfall &rarr;{' '}
+                          {Math.round(state.recommendation.runoff_volume_m3).toLocaleString()} m&sup3; runoff/yr
+                        </span>
+                      </div>
+                      <div className="flex items-start gap-2">
+                        <Ruler className="mt-0.5 h-4 w-4 text-emerald-400" />
+                        <div className="flex flex-col gap-1">
+                          <span className="text-xs text-slate-400">Pond size options (storage = annual runoff):</span>
+                          {state.recommendation.pond_options.map((option) => (
+                            <div key={option.depth_m} className="flex items-center gap-1.5 text-xs">
+                              <span className="font-medium text-slate-200">
+                                {option.depth_m}m deep &times; {Math.round(option.side_length_m)}m square
+                              </span>
+                              {option.fits_available_land === false && (
+                                <span className="text-amber-400">(exceeds available land nearby)</span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      {state.recommendation.available_land_hectares !== null && (
+                        <p className="text-xs text-slate-500">
+                          ~{state.recommendation.available_land_hectares.toFixed(1)} ha of land available nearby
+                          (excluding buildings, roads, and water bodies)
+                        </p>
+                      )}
+                    </motion.div>
+                  )}
                 </motion.div>
               )}
             </motion.div>

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { analyzeContourFile, createVillage, getElevation, listVillages, searchPlaces } from './client'
+import { analyzeContourFile, createVillage, getElevation, getRecommendation, listVillages, searchPlaces } from './client'
 
 describe('api client', () => {
   afterEach(() => {
@@ -78,5 +78,35 @@ describe('api client', () => {
     const file = new File(['not kml'], 'notes.txt')
 
     await expect(analyzeContourFile(file)).rejects.toThrow('expected a .kml file')
+  })
+
+  it('getRecommendation posts to /villages/{id}/recommend and returns parsed JSON', async () => {
+    const recommendation = {
+      village_id: 'v1',
+      catchment_area_hectares: 1.96,
+      average_annual_rainfall_mm: 1436.4,
+      runoff_volume_m3: 7043.4,
+      runoff_coefficient: 0.25,
+      pond_options: [{ depth_m: 3, surface_area_m2: 2347.8, side_length_m: 48.5, fits_available_land: true }],
+      available_land_hectares: 1155.3,
+    }
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(recommendation) })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await getRecommendation('v1')
+
+    expect(result).toEqual(recommendation)
+    const [url, options] = fetchMock.mock.calls[0]
+    expect(url).toContain('/villages/v1/recommend')
+    expect(options.method).toBe('POST')
+  })
+
+  it('getRecommendation throws a readable error on a non-OK response', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: false, status: 404, json: () => Promise.resolve({ detail: 'village not found' }) }),
+    )
+
+    await expect(getRecommendation('missing-id')).rejects.toThrow('village not found')
   })
 })

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { contourColor } from './contourColor'
+import { contourColor, contourGradientCss } from './contourColor'
 
 describe('contourColor', () => {
   it('gives the lowest elevation a distinct color from the highest', () => {
@@ -28,5 +28,17 @@ describe('contourColor', () => {
     const belowMin = contourColor(50, 100, 200)
     const atMin = contourColor(100, 100, 200)
     expect(belowMin).toBe(atMin)
+  })
+})
+
+describe('contourGradientCss', () => {
+  it('produces a usable CSS linear-gradient string', () => {
+    expect(contourGradientCss()).toMatch(/^linear-gradient\(to right, .+\)$/)
+  })
+
+  it('starts and ends with the same colors contourColor gives the extremes', () => {
+    const css = contourGradientCss()
+    expect(css).toContain(contourColor(0, 0, 1))
+    expect(css).toContain(contourColor(1, 0, 1))
   })
 })

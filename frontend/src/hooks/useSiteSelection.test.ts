@@ -21,6 +21,16 @@ const elevation = {
   catchment_boundary: [[81.29, 21.18]] as [number, number][],
 }
 
+const recommendation = {
+  village_id: 'v1',
+  catchment_area_hectares: 1.96,
+  average_annual_rainfall_mm: 1436.4,
+  runoff_volume_m3: 7043.4,
+  runoff_coefficient: 0.25,
+  pond_options: [{ depth_m: 3, surface_area_m2: 2347.8, side_length_m: 48.5, fits_available_land: true }],
+  available_land_hectares: 1155.3,
+}
+
 /** A promise you can resolve/reject from outside its executor, for controlling resolution order in tests. */
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -34,8 +44,10 @@ function deferred<T>() {
 
 describe('useSiteSelection', () => {
   beforeEach(() => {
+    vi.clearAllMocks()
     vi.mocked(client.createVillage).mockResolvedValue(village)
     vi.mocked(client.getElevation).mockResolvedValue(elevation)
+    vi.mocked(client.getRecommendation).mockResolvedValue(recommendation)
   })
 
   it('starts idle', () => {
@@ -157,5 +169,62 @@ describe('useSiteSelection', () => {
     expect(result.current.state.status).toBe('located')
     expect(result.current.state.village).toEqual(villageB)
     expect(result.current.state.elevation).toBeNull()
+  })
+
+  it('getFullRecommendation moves idle -> loading -> done with the recommendation set', async () => {
+    const { result } = renderHook(() => useSiteSelection())
+    await act(() => result.current.selectPoint(21.19, 81.3))
+    await waitFor(() => expect(result.current.state.status).toBe('located'))
+    await act(() => result.current.analyze())
+    await waitFor(() => expect(result.current.state.status).toBe('analyzed'))
+
+    act(() => {
+      result.current.getFullRecommendation()
+    })
+    expect(result.current.state.recommendationStatus).toBe('loading')
+
+    await waitFor(() => expect(result.current.state.recommendationStatus).toBe('done'))
+    expect(result.current.state.recommendation).toEqual(recommendation)
+  })
+
+  it('getFullRecommendation does nothing before the site is analyzed', () => {
+    const { result } = renderHook(() => useSiteSelection())
+
+    act(() => {
+      result.current.getFullRecommendation()
+    })
+
+    expect(result.current.state.recommendationStatus).toBe('idle')
+    expect(client.getRecommendation).not.toHaveBeenCalled()
+  })
+
+  it('getFullRecommendation failure moves to error with a message', async () => {
+    vi.mocked(client.getRecommendation).mockRejectedValue(new Error('recommendation service unavailable'))
+    const { result } = renderHook(() => useSiteSelection())
+    await act(() => result.current.selectPoint(21.19, 81.3))
+    await waitFor(() => expect(result.current.state.status).toBe('located'))
+    await act(() => result.current.analyze())
+    await waitFor(() => expect(result.current.state.status).toBe('analyzed'))
+
+    await act(() => result.current.getFullRecommendation())
+
+    expect(result.current.state.recommendationStatus).toBe('error')
+    expect(result.current.state.recommendationError).toBe('recommendation service unavailable')
+  })
+
+  it('selecting a new point resets any prior recommendation', async () => {
+    const { result } = renderHook(() => useSiteSelection())
+    await act(() => result.current.selectPoint(21.19, 81.3))
+    await waitFor(() => expect(result.current.state.status).toBe('located'))
+    await act(() => result.current.analyze())
+    await waitFor(() => expect(result.current.state.status).toBe('analyzed'))
+    await act(() => result.current.getFullRecommendation())
+    await waitFor(() => expect(result.current.state.recommendationStatus).toBe('done'))
+
+    vi.mocked(client.createVillage).mockResolvedValueOnce(villageB)
+    await act(() => result.current.selectPoint(22.0, 82.0))
+
+    expect(result.current.state.recommendationStatus).toBe('idle')
+    expect(result.current.state.recommendation).toBeNull()
   })
 })

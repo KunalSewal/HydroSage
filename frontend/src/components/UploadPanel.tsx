@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { AlertTriangle, Droplets, Loader2, UploadCloud } from 'lucide-react'
 import { useRef } from 'react'
 import type { ContourUploadState } from '../hooks/useContourUpload'
+import ContourLegend from './ContourLegend'
 
 interface UploadPanelProps {
   state: ContourUploadState
@@ -60,6 +61,7 @@ export default function UploadPanel({ state, onUpload, onReset }: UploadPanelPro
             exit={{ opacity: 0 }}
             className="flex flex-col gap-3"
           >
+            <ContourLegend minElevation={state.result.min_elevation} maxElevation={state.result.max_elevation} />
             <div className="flex items-start gap-2 rounded-md bg-slate-800 p-3 text-sm">
               <Droplets className="mt-0.5 h-4 w-4 text-amber-400" />
               <div>

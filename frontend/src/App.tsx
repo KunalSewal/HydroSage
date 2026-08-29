@@ -12,7 +12,7 @@ type Mode = 'click' | 'upload'
 function App() {
   const [mode, setMode] = useState<Mode>('click')
   const { position } = useGeolocation()
-  const { state, selectPoint, analyze } = useSiteSelection()
+  const { state, selectPoint, analyze, getFullRecommendation } = useSiteSelection()
   const { state: uploadState, upload, reset: resetUpload } = useContourUpload()
 
   const isUploadMode = mode === 'upload' && uploadState.result !== null
@@ -65,6 +65,7 @@ function App() {
             state={state}
             onAnalyze={analyze}
             onRetry={() => state.lastPoint && selectPoint(state.lastPoint.lat, state.lastPoint.lon)}
+            onGetRecommendation={getFullRecommendation}
           />
         ) : (
           <UploadPanel state={uploadState} onUpload={upload} onReset={resetUpload} />
