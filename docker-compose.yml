@@ -14,6 +14,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
@@ -24,6 +25,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
 
   minio:
     image: minio/minio:latest
@@ -41,12 +43,13 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
 
   api:
     build: ./backend
     env_file: ./backend/.env
     ports:
-      - "8000:8000"
+      - "${API_PORT:-8000}:8000"
     depends_on:
       postgis:
         condition: service_healthy
@@ -54,22 +57,16 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
-    volumes:
-      - ./backend/app:/app/app
+    restart: unless-stopped
 
-  worker:
-    build: ./backend
-    command: celery -A app.celery_app.celery_app worker --loglevel=info
-    env_file: ./backend/.env
-    depends_on:
-      postgis:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
-    volumes:
-      - ./backend/app:/app/app
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    restart: unless-stopped
 
 volumes:
   postgis_data:

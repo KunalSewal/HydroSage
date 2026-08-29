@@ -3,9 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import (
     analyze_contour,
-    catchment,
     geocode,
-    jobs,
     rainfall,
     recommend,
     report,
@@ -22,12 +20,15 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# The frontend (Vite dev server) runs on a different origin than this API,
-# so the browser blocks every request without explicit CORS headers here —
-# not just POSTs, GETs too, and preflight OPTIONS requests 405 without this.
+# The frontend runs on a different origin than this API, so the browser
+# blocks every request without explicit CORS headers here — not just
+# POSTs, GETs too, and preflight OPTIONS requests 405 without this. This
+# exact gap shipped once already (docs/DECISIONS.md D-005) because the
+# allowlist was hardcoded to localhost; it's a setting now specifically
+# so a deployment can't silently repeat that by forgetting to edit code.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=settings.cors_allowed_origins_list,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -35,9 +36,7 @@ app.add_middleware(
 app.include_router(villages.router)
 app.include_router(rainfall.router)
 app.include_router(satellite.router)
-app.include_router(catchment.router)
 app.include_router(recommend.router)
-app.include_router(jobs.router)
 app.include_router(report.router)
 app.include_router(geocode.router)
 app.include_router(analyze_contour.router)

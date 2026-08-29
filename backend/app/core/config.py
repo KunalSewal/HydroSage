@@ -31,6 +31,18 @@ class Settings(BaseSettings):
 
     overpass_base_url: str = "https://overpass-api.de"
 
+    # Comma-separated -- e.g. "https://hydrosage.example.com,http://localhost:5173".
+    # Defaults cover local dev only; a real deployment must set this to the
+    # frontend's actual public URL or the browser will silently block every
+    # request (this exact bug already shipped once this project -- see
+    # docs/DECISIONS.md D-005's CORS fix -- so it's a setting, not a
+    # hardcoded list, specifically to avoid repeating it per-environment).
+    cors_allowed_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+
+    @property
+    def cors_allowed_origins_list(self) -> list[str]:
+        return [origin.strip() for origin in self.cors_allowed_origins.split(",") if origin.strip()]
+
 
 @lru_cache
 def get_settings() -> Settings:
