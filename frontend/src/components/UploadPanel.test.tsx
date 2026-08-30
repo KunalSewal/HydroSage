@@ -5,10 +5,10 @@ import type { ContourUploadState } from '../hooks/useContourUpload'
 import UploadPanel from './UploadPanel'
 
 const baseState: ContourUploadState = {
-  status: 'idle',
+  status: 'uploading',
   result: null,
   errorMessage: null,
-  fileName: null,
+  fileName: 'contours.kml',
 }
 
 const result = {
@@ -31,37 +31,31 @@ const result = {
 }
 
 describe('UploadPanel', () => {
-  it('shows the upload prompt when idle', () => {
-    render(<UploadPanel state={baseState} onUpload={vi.fn()} onReset={vi.fn()} />)
-    expect(screen.getByText(/upload contour map/i)).toBeInTheDocument()
+  it('shows an uploading indicator while analyzing', () => {
+    render(<UploadPanel state={baseState} onRetry={vi.fn()} />)
+    expect(screen.getByText(/analyzing contours\.kml/i)).toBeInTheDocument()
   })
 
-  it('shows the pond site immediately, but stages the recommendation behind a click', async () => {
-    render(
-      <UploadPanel
-        state={{ ...baseState, status: 'analyzed', result }}
-        onUpload={vi.fn()}
-        onReset={vi.fn()}
-      />,
-    )
+  it('shows the full recommendation immediately once analyzed', () => {
+    render(<UploadPanel state={{ ...baseState, status: 'analyzed', result }} onRetry={vi.fn()} />)
 
     expect(screen.getByText(/catchment area: 49\.6 ha/i)).toBeInTheDocument()
-    expect(screen.queryByText(/3m deep.*242m square/)).not.toBeInTheDocument()
-
-    await userEvent.click(screen.getByRole('button', { name: /get pond recommendation/i }))
-
     expect(screen.getByText(/3m deep.*242m square/)).toBeInTheDocument()
     expect(screen.getByText(/741\.8 ha of land available/)).toBeInTheDocument()
   })
 
-  it('shows the error message on failure', () => {
+  it('shows the error message and calls onRetry from the retry button', async () => {
+    const onRetry = vi.fn()
     render(
       <UploadPanel
         state={{ ...baseState, status: 'error', errorMessage: 'could not parse contour KML' }}
-        onUpload={vi.fn()}
-        onReset={vi.fn()}
+        onRetry={onRetry}
       />,
     )
     expect(screen.getByText(/could not parse contour kml/i)).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: /try another file/i }))
+
+    expect(onRetry).toHaveBeenCalledOnce()
   })
 })
