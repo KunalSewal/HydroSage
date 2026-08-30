@@ -10,6 +10,9 @@ CLAUDE.md
 # Private source documents (project description / HLD PDFs and similar)
 docs/private/
 
+# Claude Code local scratch (SDD ledgers, brainstorming-companion mockups)
+.superpowers/
+
 # Editor / OS
 .vscode/*
 !.vscode/extensions.json
