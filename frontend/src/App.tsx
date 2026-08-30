@@ -1,22 +1,29 @@
+import { AnimatePresence } from 'framer-motion'
 import { useState } from 'react'
+import BottomSheet from './components/BottomSheet'
+import DropZoneOverlay from './components/DropZoneOverlay'
+import IdleHint from './components/IdleHint'
+import LoadingScreen from './components/LoadingScreen'
 import LocateButton from './components/LocateButton'
 import MapView from './components/MapView'
-import SearchBox from './components/SearchBox'
 import SitePanel from './components/SitePanel'
+import TopBar from './components/TopBar'
 import UploadPanel from './components/UploadPanel'
 import { useContourUpload } from './hooks/useContourUpload'
 import { useGeolocation } from './hooks/useGeolocation'
 import { useSiteSelection } from './hooks/useSiteSelection'
 
-type Mode = 'click' | 'upload'
-
 function App() {
-  const [mode, setMode] = useState<Mode>('click')
   const { position, status: geoStatus, locate, requestId: geoRequestId } = useGeolocation()
   const { state, selectPoint, analyze, getFullRecommendation } = useSiteSelection()
   const { state: uploadState, upload, reset: resetUpload } = useContourUpload()
+  const [isDropZoneOpen, setIsDropZoneOpen] = useState(false)
 
-  const isUploadMode = mode === 'upload' && uploadState.result !== null
+  // Once a file's been chosen and is uploading/analyzed/erroring, that
+  // result takes over the map and bottom sheet -- entry is now via the
+  // drop-zone overlay (Task 6) instead of a permanent tab, so this is
+  // derived from upload state instead of a separately-tracked mode.
+  const isUploadMode = uploadState.status !== 'idle'
 
   // state.lastPoint is set synchronously on click, before the reverse-geocode
   // round-trip resolves -- deriving from state.village instead left a beat of
@@ -29,54 +36,73 @@ function App() {
   const pondLocation = isUploadMode ? (uploadState.result?.pond_location ?? null) : (state.elevation?.pond_location ?? null)
   const fitBoundsTo = isUploadMode ? (uploadState.result?.source_bbox ?? null) : null
 
+  // requestId starts at 0 and only increments once useGeolocation's very
+  // first locate() completes (success or failure) -- so this is precisely
+  // "still waiting on the automatic on-load geolocation", not "any time
+  // status happens to be 'locating'" (which would also be true for a later
+  // manual re-locate via LocateButton, wrongly re-showing the loading
+  // screen every time).
+  const showLoadingScreen = geoRequestId === 0
+  const showIdleHint = !isUploadMode && state.status === 'idle' && !isDropZoneOpen
+  const showSiteSheet = !isUploadMode && state.status !== 'idle'
+  const showUploadSheet = isUploadMode
+
+  function handleFileChosen(file: File) {
+    setIsDropZoneOpen(false)
+    upload(file)
+  }
+
+  function handleUploadRetry() {
+    resetUpload()
+    setIsDropZoneOpen(true)
+  }
+
   return (
-    <div className="relative flex h-full w-full">
-      <div className="relative flex-1">
-        <MapView
-          center={position}
-          markerPosition={markerPosition}
-          contours={contours}
-          onMapClick={mode === 'click' ? selectPoint : () => {}}
-          catchmentBoundary={catchmentBoundary}
-          pondLocation={pondLocation}
-          fitBoundsTo={fitBoundsTo}
-          geoRequestId={geoRequestId}
-        />
-        {mode === 'click' && <SearchBox onResultSelected={selectPoint} />}
-        {mode === 'click' && <LocateButton onClick={locate} status={geoStatus} />}
+    <div className="relative h-full w-full">
+      <AnimatePresence>{showLoadingScreen && <LoadingScreen />}</AnimatePresence>
+
+      <MapView
+        center={position}
+        markerPosition={markerPosition}
+        contours={contours}
+        onMapClick={!isUploadMode ? selectPoint : () => {}}
+        catchmentBoundary={catchmentBoundary}
+        pondLocation={pondLocation}
+        fitBoundsTo={fitBoundsTo}
+        geoRequestId={geoRequestId}
+      />
+
+      <div className="absolute left-4 top-4 z-[1000] rounded-full bg-hs-panel/70 px-3 py-1.5 font-display text-sm font-semibold text-hs-cream backdrop-blur-md">
+        HydroSage
       </div>
 
-      <div className="flex h-full w-80 flex-col gap-4 bg-slate-900/90 p-6 text-slate-100 backdrop-blur">
-        <h1 className="font-display text-xl font-semibold">HydroSage</h1>
+      <TopBar onResultSelected={selectPoint} onUploadClick={() => setIsDropZoneOpen(true)} />
+      <LocateButton onClick={locate} status={geoStatus} />
 
-        <div className="flex gap-1 rounded-md bg-slate-800 p-1 text-xs font-medium">
-          <button
-            type="button"
-            onClick={() => setMode('click')}
-            className={`flex-1 rounded px-2 py-1.5 ${mode === 'click' ? 'bg-sky-500 text-white' : 'text-slate-400 hover:text-slate-200'}`}
-          >
-            Click a point
-          </button>
-          <button
-            type="button"
-            onClick={() => setMode('upload')}
-            className={`flex-1 rounded px-2 py-1.5 ${mode === 'upload' ? 'bg-sky-500 text-white' : 'text-slate-400 hover:text-slate-200'}`}
-          >
-            Upload contour map
-          </button>
-        </div>
+      {showIdleHint && <IdleHint />}
 
-        {mode === 'click' ? (
+      {showSiteSheet && (
+        <BottomSheet expandable={state.status === 'analyzed'}>
           <SitePanel
             state={state}
             onAnalyze={analyze}
             onRetry={() => state.lastPoint && selectPoint(state.lastPoint.lat, state.lastPoint.lon)}
             onGetRecommendation={getFullRecommendation}
           />
-        ) : (
-          <UploadPanel state={uploadState} onUpload={upload} onReset={resetUpload} />
-        )}
-      </div>
+        </BottomSheet>
+      )}
+
+      {showUploadSheet && (
+        <BottomSheet expandable={uploadState.status === 'analyzed'}>
+          <UploadPanel state={uploadState} onRetry={handleUploadRetry} />
+        </BottomSheet>
+      )}
+
+      <DropZoneOverlay
+        isOpen={isDropZoneOpen}
+        onClose={() => setIsDropZoneOpen(false)}
+        onFileChosen={handleFileChosen}
+      />
     </div>
   )
 }
