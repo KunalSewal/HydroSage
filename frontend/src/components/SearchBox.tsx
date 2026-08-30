@@ -31,25 +31,22 @@ export default function SearchBox({ onResultSelected }: SearchBoxProps) {
   }
 
   return (
-    <div className="absolute left-1/2 top-4 z-[1000] w-96 -translate-x-1/2">
-      <form
-        onSubmit={handleSubmit}
-        className="flex items-center gap-2 rounded-md bg-slate-900/90 px-3 py-2 text-slate-100 shadow-lg backdrop-blur"
-      >
+    <div className="relative w-full">
+      <form onSubmit={handleSubmit} className="flex items-center gap-2">
         {status === 'searching' ? (
-          <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
+          <Loader2 className="h-4 w-4 shrink-0 animate-spin text-hs-muted" />
         ) : (
-          <Search className="h-4 w-4 text-slate-400" />
+          <Search className="h-4 w-4 shrink-0 text-hs-muted" />
         )}
         <input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Search a place..."
-          className="w-full bg-transparent text-sm outline-none placeholder:text-slate-500"
+          className="w-full bg-transparent text-sm outline-none placeholder:text-hs-muted"
         />
       </form>
       {results.length > 0 && (
-        <ul className="mt-1 rounded-md bg-slate-900/95 text-sm text-slate-100 shadow-lg">
+        <ul className="absolute left-0 right-0 top-full z-10 mt-2 rounded-md bg-hs-panel/95 text-sm text-hs-cream shadow-lg">
           {results.map((result) => (
             <li key={`${result.lat}-${result.lon}`}>
               <button
@@ -60,7 +57,7 @@ export default function SearchBox({ onResultSelected }: SearchBoxProps) {
                   setStatus('idle')
                   setQuery(result.display_name)
                 }}
-                className="block w-full px-3 py-2 text-left hover:bg-slate-800"
+                className="block w-full px-3 py-2 text-left hover:bg-hs-mid/60"
               >
                 {result.display_name}
               </button>
@@ -69,12 +66,14 @@ export default function SearchBox({ onResultSelected }: SearchBoxProps) {
         </ul>
       )}
       {status === 'no-results' && (
-        <p className="mt-1 rounded-md bg-slate-900/95 px-3 py-2 text-sm text-slate-400 shadow-lg">
+        <p className="absolute left-0 right-0 top-full z-10 mt-2 rounded-md bg-hs-panel/95 px-3 py-2 text-sm text-hs-muted shadow-lg">
           No places found for "{query}".
         </p>
       )}
       {status === 'error' && (
-        <p className="mt-1 rounded-md bg-red-950/90 px-3 py-2 text-sm text-red-200 shadow-lg">{errorMessage}</p>
+        <p className="absolute left-0 right-0 top-full z-10 mt-2 rounded-md bg-red-950/90 px-3 py-2 text-sm text-red-200 shadow-lg">
+          {errorMessage}
+        </p>
       )}
     </div>
   )
