@@ -16,11 +16,6 @@ const baseState: SiteSelectionState = {
 }
 
 describe('SitePanel', () => {
-  it('shows a prompt when idle', () => {
-    render(<SitePanel state={baseState} onAnalyze={vi.fn()} onRetry={vi.fn()} onGetRecommendation={vi.fn()} />)
-    expect(screen.getByText(/click anywhere/i)).toBeInTheDocument()
-  })
-
   it('shows a locating indicator', () => {
     render(<SitePanel state={{ ...baseState, status: 'locating' }} onAnalyze={vi.fn()} onRetry={vi.fn()} onGetRecommendation={vi.fn()} />)
     expect(screen.getByText(/locating/i)).toBeInTheDocument()
