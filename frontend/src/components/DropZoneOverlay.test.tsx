@@ -34,6 +34,17 @@ describe('DropZoneOverlay', () => {
     expect(onFileChosen).toHaveBeenCalledWith(file)
   })
 
+  it('calls onClose when the backdrop is clicked, but not when the drop card itself is clicked', async () => {
+    const onClose = vi.fn()
+    render(<DropZoneOverlay isOpen onClose={onClose} onFileChosen={vi.fn()} />)
+
+    await userEvent.click(screen.getByText(/drop your contour map/i))
+    expect(onClose).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByTestId('dropzone-surface'))
+    expect(onClose).toHaveBeenCalledOnce()
+  })
+
   it('calls onFileChosen when a file is dropped onto the surface', () => {
     const onFileChosen = vi.fn()
     render(<DropZoneOverlay isOpen onClose={vi.fn()} onFileChosen={onFileChosen} />)

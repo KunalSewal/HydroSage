@@ -25,6 +25,7 @@ export default function DropZoneOverlay({ isOpen, onClose, onFileChosen }: DropZ
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           className="absolute inset-0 z-[1500] flex items-center justify-center bg-hs-deep/85 backdrop-blur-sm"
+          onClick={onClose}
           onDragOver={(event) => {
             event.preventDefault()
             setIsDraggingOver(true)
@@ -38,14 +39,20 @@ export default function DropZoneOverlay({ isOpen, onClose, onFileChosen }: DropZ
         >
           <button
             type="button"
-            onClick={onClose}
+            onClick={(event) => {
+              event.stopPropagation()
+              onClose()
+            }}
             aria-label="Close upload"
             className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-full bg-hs-cream/10 text-hs-cream hover:bg-hs-cream/20"
           >
             <X className="h-4 w-4" />
           </button>
           <div
-            onClick={() => inputRef.current?.click()}
+            onClick={(event) => {
+              event.stopPropagation()
+              inputRef.current?.click()
+            }}
             className={`cursor-pointer rounded-2xl border-2 border-dashed px-12 py-9 text-center transition-colors ${
               isDraggingOver ? 'border-hs-amber bg-hs-amber/10' : 'border-hs-amber/50'
             }`}
