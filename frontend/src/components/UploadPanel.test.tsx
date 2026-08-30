@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import type { ContourUploadState } from '../hooks/useContourUpload'
 import UploadPanel from './UploadPanel'
@@ -35,7 +36,7 @@ describe('UploadPanel', () => {
     expect(screen.getByText(/upload contour map/i)).toBeInTheDocument()
   })
 
-  it('shows the recommendation once a file is analyzed', () => {
+  it('shows the pond site immediately, but stages the recommendation behind a click', async () => {
     render(
       <UploadPanel
         state={{ ...baseState, status: 'analyzed', result }}
@@ -45,6 +46,10 @@ describe('UploadPanel', () => {
     )
 
     expect(screen.getByText(/catchment area: 49\.6 ha/i)).toBeInTheDocument()
+    expect(screen.queryByText(/3m deep.*242m square/)).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: /get pond recommendation/i }))
+
     expect(screen.getByText(/3m deep.*242m square/)).toBeInTheDocument()
     expect(screen.getByText(/741\.8 ha of land available/)).toBeInTheDocument()
   })

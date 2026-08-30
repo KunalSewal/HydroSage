@@ -54,4 +54,24 @@ describe('useGeolocation', () => {
 
     expect(getCurrentPosition).toHaveBeenCalledTimes(2)
   })
+
+  it('requestId increments even when locate() resolves to the same position twice', async () => {
+    // A map that recenters based on `position` alone would silently do
+    // nothing on the second click here, since the coordinates never
+    // change -- this is what made the locate-me button look broken.
+    const getCurrentPosition = vi.fn((success: PositionCallback) => {
+      success({ coords: { latitude: 19.0, longitude: 74.0 } } as GeolocationPosition)
+    })
+    vi.stubGlobal('navigator', { geolocation: { getCurrentPosition } })
+
+    const { result } = renderHook(() => useGeolocation())
+    await waitFor(() => expect(result.current.status).toBe('located'))
+    const firstRequestId = result.current.requestId
+    const firstPosition = result.current.position
+
+    await act(() => result.current.locate())
+
+    expect(result.current.position).toEqual(firstPosition) // unchanged coordinates
+    expect(result.current.requestId).toBeGreaterThan(firstRequestId) // but a distinguishable new request
+  })
 })

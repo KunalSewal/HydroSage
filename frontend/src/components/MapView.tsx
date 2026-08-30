@@ -32,6 +32,10 @@ interface MapViewProps {
   catchmentBoundary?: [number, number][] | null
   pondLocation?: { lat: number; lon: number } | null
   fitBoundsTo?: BoundingBox | null
+  // Bumped by useGeolocation on every locate() completion, even when the
+  // resulting position is unchanged -- see RecenterOnChange below for why
+  // this needs to be a separate signal from the position itself.
+  geoRequestId?: number
 }
 
 function ClickHandler({ onMapClick }: { onMapClick: (lat: number, lon: number) => void }) {
@@ -100,11 +104,22 @@ function CatchmentBoundaryLayer({ boundary }: { boundary: [number, number][] }) 
   )
 }
 
-function RecenterOnChange({ position }: { position: { lat: number; lon: number } }) {
+// A useful "you can see individual streets/fields" zoom level -- flyTo used
+// to be called with the map's *current* zoom, which just panned in place if
+// the user had zoomed out (e.g. to see the whole country) without ever
+// zooming back in, making "locate me" look like it did nothing.
+const MIN_USEFUL_ZOOM = 14
+
+// `nonce` (typically useGeolocation's requestId) is in the dependency array
+// specifically so clicking "locate me" twice in a row still recenters the
+// map even when the returned coordinates are byte-identical to last time
+// (the common case) -- position.lat/lon alone wouldn't change, so the
+// effect would silently no-op without it, making the button look broken.
+function RecenterOnChange({ position, nonce }: { position: { lat: number; lon: number }; nonce?: number }) {
   const map = useMap()
   useEffect(() => {
-    map.flyTo([position.lat, position.lon], map.getZoom())
-  }, [position.lat, position.lon, map])
+    map.flyTo([position.lat, position.lon], Math.max(map.getZoom(), MIN_USEFUL_ZOOM))
+  }, [position.lat, position.lon, nonce, map])
   return null
 }
 
@@ -132,6 +147,7 @@ export default function MapView({
   catchmentBoundary,
   pondLocation,
   fitBoundsTo,
+  geoRequestId,
 }: MapViewProps) {
   return (
     <MapContainer center={[center.lat, center.lon]} zoom={12} className="h-full w-full">
@@ -140,7 +156,11 @@ export default function MapView({
         url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
       />
       <ClickHandler onMapClick={onMapClick} />
-      {fitBoundsTo ? <FitBounds bbox={fitBoundsTo} /> : <RecenterOnChange position={markerPosition ?? center} />}
+      {fitBoundsTo ? (
+        <FitBounds bbox={fitBoundsTo} />
+      ) : (
+        <RecenterOnChange position={markerPosition ?? center} nonce={markerPosition ? undefined : geoRequestId} />
+      )}
       {markerPosition && (
         <Marker
           key={`${markerPosition.lat}-${markerPosition.lon}`}

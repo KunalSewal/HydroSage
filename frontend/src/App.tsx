@@ -12,7 +12,7 @@ type Mode = 'click' | 'upload'
 
 function App() {
   const [mode, setMode] = useState<Mode>('click')
-  const { position, status: geoStatus, locate } = useGeolocation()
+  const { position, status: geoStatus, locate, requestId: geoRequestId } = useGeolocation()
   const { state, selectPoint, analyze, getFullRecommendation } = useSiteSelection()
   const { state: uploadState, upload, reset: resetUpload } = useContourUpload()
 
@@ -40,6 +40,7 @@ function App() {
           catchmentBoundary={catchmentBoundary}
           pondLocation={pondLocation}
           fitBoundsTo={fitBoundsTo}
+          geoRequestId={geoRequestId}
         />
         {mode === 'click' && <SearchBox onResultSelected={selectPoint} />}
         {mode === 'click' && <LocateButton onClick={locate} status={geoStatus} />}
