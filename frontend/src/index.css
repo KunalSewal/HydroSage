@@ -1,8 +1,16 @@
 @import "tailwindcss";
 
 @theme {
-  --font-display: "Space Grotesk", "Inter", system-ui, sans-serif;
+  --font-display: "Fraunces", "Georgia", serif;
   --font-sans: "Inter", system-ui, sans-serif;
+
+  --color-hs-deep: #0a231d;
+  --color-hs-mid: #173d33;
+  --color-hs-panel: #0f2b24;
+  --color-hs-amber: #f5c26b;
+  --color-hs-teal: #5fc9ba;
+  --color-hs-cream: #fdf6ec;
+  --color-hs-muted: #a8d8ce;
 }
 
 html, body, #root {
@@ -12,8 +20,8 @@ html, body, #root {
 
 body {
   font-family: var(--font-sans);
-  background-color: #0b1220;
-  color: #e7ecf5;
+  background-color: var(--color-hs-deep);
+  color: var(--color-hs-cream);
 }
 
 @keyframes marker-bounce-in {
