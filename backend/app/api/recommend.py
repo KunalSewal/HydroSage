@@ -43,7 +43,9 @@ def get_recommendation(village_id: str, db: Session = Depends(get_db)):
     catchment = catchment_cache.get_or_compute(str(village.id), lambda: analyze_catchment(mosaic, covered))
 
     centroid = to_shape(village.centroid)
-    fields = compute_recommendation_fields(centroid.y, centroid.x, bbox, catchment.catchment_area_m2)
+    fields = compute_recommendation_fields(
+        centroid.y, centroid.x, bbox, catchment.catchment_area_m2, catchment.achievable_volume_m3_by_depth
+    )
 
     return RecommendationOut(
         village_id=village.id,

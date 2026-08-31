@@ -32,7 +32,7 @@ async def analyze_contour(file: UploadFile):
     centroid_lat = (bbox.min_lat + bbox.max_lat) / 2
     centroid_lon = (bbox.min_lon + bbox.max_lon) / 2
     recommendation_fields = compute_recommendation_fields(
-        centroid_lat, centroid_lon, bbox, result.catchment_area_m2
+        centroid_lat, centroid_lon, bbox, result.catchment_area_m2, result.achievable_volume_m3_by_depth
     )
 
     return CatchmentAnalysisOut(

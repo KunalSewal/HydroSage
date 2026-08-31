@@ -51,7 +51,11 @@ def _get_available_land_hectares(bbox: BoundingBox) -> float | None:
 
 
 def compute_recommendation_fields(
-    lat: float, lon: float, bbox: BoundingBox, catchment_area_m2: float
+    lat: float,
+    lon: float,
+    bbox: BoundingBox,
+    catchment_area_m2: float,
+    achievable_volume_m3_by_depth: dict[float, float],
 ) -> RecommendationFieldsOut:
     end_year = date.today().year - 1
     start = date(end_year - RAINFALL_HISTORY_YEARS + 1, 1, 1)
@@ -81,6 +85,11 @@ def compute_recommendation_fields(
                 surface_area_m2=o.surface_area_m2,
                 side_length_m=o.side_length_m,
                 fits_available_land=(o.surface_area_m2 <= available_land_m2) if available_land_m2 is not None else None,
+                fits_terrain_capacity=(
+                    achievable_volume_m3_by_depth[o.depth_m] >= runoff.runoff_volume_m3
+                    if o.depth_m in achievable_volume_m3_by_depth
+                    else None
+                ),
             )
             for o in pond.options
         ],
