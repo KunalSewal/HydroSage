@@ -6,6 +6,7 @@ from app.domain.catchment import (
     MIN_CATCHMENT_AREA_M2,
     _Candidate,
     _find_depressions,
+    _flood_fill_achievable_volume,
     _sample_candidates,
     _select_pond_site,
     analyze_catchment,
@@ -81,6 +82,56 @@ def test_find_depressions_respects_the_margin():
     depressions = _find_depressions(elevation, margin_rows=3, margin_cols=3)
 
     assert not depressions[0, 0]
+
+
+# ---- _flood_fill_achievable_volume: real terrain shape -> achievable storage ----
+
+
+def test_flood_fill_achievable_volume_on_a_flat_bottomed_bowl():
+    # A perfectly flat-bottomed 10x10 bowl, 1m deep, surrounded by high walls.
+    # Flooding it to 1m should hold very close to its full flat-bottom volume
+    # (area * depth); flooding deeper isn't possible since the walls are high
+    # enough not to spill within this test's candidate depths.
+    elevation = np.full((30, 30), 100.0)
+    elevation[10:20, 10:20] = 0.0  # a 10x10 flat floor at elevation 0
+    catchment_mask = np.ones((30, 30), dtype=bool)
+    cell_area_m2 = 100.0  # 10m x 10m cells -> the bowl floor is 100 * 100 = 10,000 m^2
+
+    volumes = _flood_fill_achievable_volume(
+        elevation, cell_area_m2, site_row=15, site_col=15, catchment_mask=catchment_mask, depths_m=(1.0,)
+    )
+
+    assert volumes[1.0] == pytest.approx(10_000 * 1.0, rel=0.05)
+
+
+def test_flood_fill_achievable_volume_caps_when_the_flood_spills():
+    # A shallow bowl that spills (reaches the raster edge) well before the
+    # requested depth -- every depth at or past the spill point must report
+    # the same capped volume, since the terrain can't hold more without an
+    # embankment higher than its own natural rim.
+    elevation = np.full((10, 10), 100.0)
+    elevation[4:6, 4:6] = 99.0  # only 1m of relief before the flood reaches the raster edge
+    catchment_mask = np.ones((10, 10), dtype=bool)
+
+    volumes = _flood_fill_achievable_volume(
+        elevation, cell_area_m2=1.0, site_row=4, site_col=4, catchment_mask=catchment_mask, depths_m=(2.0, 4.0)
+    )
+
+    assert volumes[2.0] == volumes[4.0]  # capped at the same achievable volume
+    assert volumes[4.0] > 0
+
+
+def test_flood_fill_achievable_volume_returns_an_entry_for_every_requested_depth():
+    elevation = np.full((20, 20), 100.0)
+    elevation[8:12, 8:12] = 90.0
+    catchment_mask = np.ones((20, 20), dtype=bool)
+
+    volumes = _flood_fill_achievable_volume(
+        elevation, cell_area_m2=4.0, site_row=10, site_col=10, catchment_mask=catchment_mask, depths_m=(2.0, 3.0, 4.0)
+    )
+
+    assert set(volumes.keys()) == {2.0, 3.0, 4.0}
+    assert volumes[2.0] <= volumes[3.0] <= volumes[4.0]
 
 
 # ---- _select_pond_site: pure selection logic, catchment-area lookup faked ----

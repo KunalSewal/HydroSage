@@ -31,6 +31,7 @@ from pysheds.grid import Grid
 from pysheds.sview import Raster, ViewFinder
 from rasterio.transform import from_bounds
 
+from app.domain.pond import CANDIDATE_DEPTHS_M
 from app.infrastructure.elevation_client import BoundingBox
 
 logger = logging.getLogger(__name__)
@@ -55,6 +56,8 @@ MAX_CATCHMENT_AREA_M2 = 500_000  # 50 hectares
 CANDIDATE_GRID_DIVISIONS = 20
 LOCAL_WINDOW_RADIUS = 2
 
+FLOOD_STEP_COUNT = 40  # resolution of the flood-fill volume integration
+
 
 @dataclass(frozen=True)
 class _Candidate:
@@ -72,6 +75,7 @@ class CatchmentResult:
     catchment_cell_count: int
     flow_accumulation_at_pond: float
     catchment_boundary: list[list[float]]  # [[lon, lat], ...], closed ring
+    achievable_volume_m3_by_depth: dict[float, float]
 
 
 def _build_grid(elevation: np.ndarray, bbox: BoundingBox) -> tuple[Grid, Raster]:
@@ -234,6 +238,60 @@ def _select_pond_site(
     return candidate, mask, area_m2
 
 
+def _flood_fill_achievable_volume(
+    elevation: np.ndarray,
+    cell_area_m2: float,
+    site_row: int,
+    site_col: int,
+    catchment_mask: np.ndarray,
+    depths_m: tuple[float, ...],
+) -> dict[float, float]:
+    """For the chosen pond site, raises a flood level step by step from the
+    site's own base elevation (on the RAW, unconditioned grid -- the same
+    reason _find_depressions doesn't use the pit-filled grid) and
+    integrates flooded-area-vs-elevation (trapezoidal) into an achievable
+    volume at each of `depths_m` metres above that base. The flood is
+    constrained to the site's own traced catchment and stops early if it
+    would spill past that catchment's extent or the raster's edge -- once
+    that happens, every deeper depth gets the same capped volume, since
+    the terrain physically can't hold more without an embankment higher
+    than its own natural rim.
+    """
+    base_elevation = float(elevation[site_row, site_col])
+    max_depth = max(depths_m)
+    step = max_depth / FLOOD_STEP_COUNT
+
+    prev_area_m2 = 0.0
+    prev_level = base_elevation
+    volume_m3 = 0.0
+    volume_at_depth: dict[float, float] = {}
+    remaining = sorted(depths_m)
+    spilled = False
+
+    for i in range(FLOOD_STEP_COUNT + 1):
+        level = base_elevation + min(i * step, max_depth)
+        if not spilled:
+            flooded = (elevation <= level) & catchment_mask
+            labeled, _ = ndimage.label(flooded, structure=np.ones((3, 3)))
+            site_label = labeled[site_row, site_col]
+            region = (labeled == site_label) if site_label != 0 else np.zeros_like(flooded)
+            touches_edge = (
+                region[0, :].any() or region[-1, :].any() or region[:, 0].any() or region[:, -1].any()
+            )
+            spilled = touches_edge or region.sum() >= catchment_mask.sum()
+            area_m2 = float(region.sum()) * cell_area_m2
+            volume_m3 += (prev_area_m2 + area_m2) / 2.0 * (level - prev_level)
+            prev_area_m2, prev_level = area_m2, level
+
+        depth_here = level - base_elevation
+        while remaining and depth_here >= remaining[0] - 1e-9:
+            volume_at_depth[remaining.pop(0)] = volume_m3
+
+    for depth in remaining:
+        volume_at_depth[depth] = volume_m3
+    return volume_at_depth
+
+
 def analyze_catchment(elevation: np.ndarray, bbox: BoundingBox) -> CatchmentResult:
     grid, dem = _build_grid(elevation, bbox)
 
@@ -262,6 +320,9 @@ def analyze_catchment(elevation: np.ndarray, bbox: BoundingBox) -> CatchmentResu
     pond_lon, pond_lat = affine * (candidate.col + 0.5, candidate.row + 0.5)
     cell_count = int(catchment_mask.sum())
     boundary = _mask_to_boundary_ring(catchment_mask, grid)
+    achievable_volume = _flood_fill_achievable_volume(
+        elevation, cell_area_m2, candidate.row, candidate.col, catchment_mask, CANDIDATE_DEPTHS_M
+    )
 
     return CatchmentResult(
         pond_lat=float(pond_lat),
@@ -270,4 +331,5 @@ def analyze_catchment(elevation: np.ndarray, bbox: BoundingBox) -> CatchmentResu
         catchment_cell_count=cell_count,
         flow_accumulation_at_pond=candidate.accumulation,
         catchment_boundary=boundary,
+        achievable_volume_m3_by_depth=achievable_volume,
     )
