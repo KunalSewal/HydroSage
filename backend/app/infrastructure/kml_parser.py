@@ -19,6 +19,15 @@ from app.infrastructure.elevation_client import BoundingBox
 _KML_NS_URI = "http://www.opengis.net/kml/2.2"
 _KML_NS = {"kml": _KML_NS_URI}
 DEFAULT_GRID_SIZE = 300
+# A KMZ's compressed size can be a poor proxy for how much memory unzipping
+# it will actually use -- ordinary DEFLATE can amplify a modest upload by
+# roughly 1000x. ZipInfo.file_size (read from the archive's own metadata,
+# without decompressing anything) is checked against this cap before the
+# entry is read into memory, so a crafted or accidental zip bomb fails
+# cleanly with a 422 instead of exhausting server memory. 200 MiB
+# comfortably covers any realistic contour-map KML while still bounding
+# the worst case.
+MAX_KMZ_ENTRY_SIZE_BYTES = 200 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -39,7 +48,14 @@ def _load_kml_bytes(raw: bytes) -> bytes:
             if not kml_names:
                 raise ValueError("KMZ archive does not contain a .kml file")
             kml_names.sort(key=lambda name: (name.lower() != "doc.kml", name))
-            return archive.read(kml_names[0])
+            chosen = kml_names[0]
+            entry_size = archive.getinfo(chosen).file_size
+            if entry_size > MAX_KMZ_ENTRY_SIZE_BYTES:
+                raise ValueError(
+                    f"KMZ entry '{chosen}' is too large ({entry_size} bytes uncompressed, "
+                    f"limit is {MAX_KMZ_ENTRY_SIZE_BYTES} bytes)"
+                )
+            return archive.read(chosen)
     except zipfile.BadZipFile as error:
         raise ValueError("file looks like a KMZ but is not a valid zip archive") from error
 

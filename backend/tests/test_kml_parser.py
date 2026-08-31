@@ -3,7 +3,11 @@ import zipfile
 
 import pytest
 
-from app.infrastructure.kml_parser import ContourLine, parse_contour_kml
+from app.infrastructure.kml_parser import (
+    MAX_KMZ_ENTRY_SIZE_BYTES,
+    ContourLine,
+    parse_contour_kml,
+)
 
 _SAMPLE_KML = b"""<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2">
@@ -79,3 +83,16 @@ def test_parse_contour_kml_rejects_a_corrupted_zip_looking_file():
 
     with pytest.raises(ValueError, match="zip"):
         parse_contour_kml(corrupted)
+
+
+def test_parse_contour_kml_rejects_a_kmz_entry_that_declares_an_oversized_uncompressed_size(
+    monkeypatch,
+):
+    """When a KMZ entry's declared uncompressed size exceeds the cap, reject it."""
+    import app.infrastructure.kml_parser as kml_parser_module
+
+    monkeypatch.setattr(kml_parser_module, "MAX_KMZ_ENTRY_SIZE_BYTES", 10)
+    kmz_bytes = _as_kmz(_SAMPLE_KML)
+
+    with pytest.raises(ValueError, match="too large"):
+        parse_contour_kml(kmz_bytes)
