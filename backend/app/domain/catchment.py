@@ -15,10 +15,11 @@ of input (observed on both the KML-upload and click-map flows).
 """
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable
 
 import numpy as np
+from scipy import ndimage
 
 # pysheds (0.5, the latest release as of writing) still calls numpy.in1d,
 # which numpy removed in recent releases. np.isin is a drop-in replacement
@@ -60,6 +61,7 @@ class _Candidate:
     row: int
     col: int
     accumulation: float
+    is_depression: bool = False
 
 
 @dataclass(frozen=True)
@@ -88,6 +90,24 @@ def _cell_area_m2(elevation: np.ndarray, bbox: BoundingBox) -> float:
     mean_lat_rad = np.radians((bbox.min_lat + bbox.max_lat) / 2)
     meters_per_deg_lon = METERS_PER_DEGREE_LAT * np.cos(mean_lat_rad)
     return (cell_width_deg * meters_per_deg_lon) * (cell_height_deg * METERS_PER_DEGREE_LAT)
+
+
+def _find_depressions(elevation: np.ndarray, margin_rows: int, margin_cols: int) -> np.ndarray:
+    """True where a cell has no neighbor (of its 8 neighbors) that's
+    strictly lower -- a local low point on the RAW, unconditioned
+    elevation grid. Must run on this raw grid, not the pit-filled one:
+    pysheds' fill_pits/fill_depressions/resolve_flats exist specifically
+    to eliminate these for flow routing, so by the time accumulation is
+    computed in analyze_catchment, real depressions are already gone
+    from that grid."""
+    local_min = ndimage.minimum_filter(elevation, size=3, mode="nearest")
+    is_depression = elevation <= local_min
+
+    is_depression[:margin_rows, :] = False
+    is_depression[elevation.shape[0] - margin_rows :, :] = False
+    is_depression[:, :margin_cols] = False
+    is_depression[:, elevation.shape[1] - margin_cols :] = False
+    return is_depression
 
 
 def _mask_to_boundary_ring(mask: np.ndarray, grid: Grid) -> list[list[float]]:
@@ -157,21 +177,52 @@ def _select_pond_site(
     candidates: list[_Candidate],
     catchment_for: Callable[[_Candidate], tuple[np.ndarray, float]],
 ) -> tuple[_Candidate, np.ndarray, float]:
-    """Walks candidates highest-accumulation first, returning the first
-    whose catchment area falls within [MIN_CATCHMENT_AREA_M2,
-    MAX_CATCHMENT_AREA_M2]. Falls back to whichever candidate's area is
-    closest to that range if none fit exactly, rather than failing --
-    a traced catchment is still returned, it just couldn't be tuned to
-    the target scale for this particular terrain."""
+    """Walks candidates highest-accumulation first, preferring a real
+    depression (see _find_depressions) over a non-depression candidate
+    whenever one fits the target area range -- a depression is where
+    water naturally pools, a more physically grounded pond site than an
+    arbitrary point on the accumulation-ranked list. Falls back to the
+    best-fitting candidate overall (depression or not) if no depression
+    candidate fits, then to whichever candidate's area is closest to the
+    target range if nothing fits at all, rather than failing -- a traced
+    catchment is still returned, it just couldn't be tuned to the target
+    scale or a natural depression for this particular terrain.
+
+    Each candidate's (expensive, real) catchment trace is memoized by
+    position, so checking the depression subset first and then
+    potentially the full list never re-traces the same candidate twice.
+    """
     if not candidates:
         raise ValueError("no candidates to select a pond site from")
 
+    cache: dict[tuple[int, int], tuple[np.ndarray, float]] = {}
+
+    def traced(candidate: _Candidate) -> tuple[np.ndarray, float]:
+        key = (candidate.row, candidate.col)
+        if key not in cache:
+            cache[key] = catchment_for(candidate)
+        return cache[key]
+
+    def first_in_range(pool: list[_Candidate]) -> tuple[_Candidate, np.ndarray, float] | None:
+        for candidate in pool:
+            mask, area_m2 = traced(candidate)
+            if MIN_CATCHMENT_AREA_M2 <= area_m2 <= MAX_CATCHMENT_AREA_M2:
+                return candidate, mask, area_m2
+        return None
+
+    depression_candidates = [c for c in candidates if c.is_depression]
+    if depression_candidates:
+        found = first_in_range(depression_candidates)
+        if found is not None:
+            return found
+
+    found = first_in_range(candidates)
+    if found is not None:
+        return found
+
     best_fallback: tuple[float, _Candidate, np.ndarray, float] | None = None
     for candidate in candidates:
-        mask, area_m2 = catchment_for(candidate)
-        if MIN_CATCHMENT_AREA_M2 <= area_m2 <= MAX_CATCHMENT_AREA_M2:
-            return candidate, mask, area_m2
-
+        mask, area_m2 = traced(candidate)
         distance = (
             MIN_CATCHMENT_AREA_M2 - area_m2 if area_m2 < MIN_CATCHMENT_AREA_M2 else area_m2 - MAX_CATCHMENT_AREA_M2
         )
@@ -204,6 +255,8 @@ def analyze_catchment(elevation: np.ndarray, bbox: BoundingBox) -> CatchmentResu
         return mask, float(mask.sum() * cell_area_m2)
 
     candidates = _sample_candidates(acc, margin_rows, margin_cols)
+    depression_mask = _find_depressions(elevation, margin_rows, margin_cols)
+    candidates = [replace(c, is_depression=bool(depression_mask[c.row, c.col])) for c in candidates]
     candidate, catchment_mask, area_m2 = _select_pond_site(candidates, catchment_for)
 
     pond_lon, pond_lat = affine * (candidate.col + 0.5, candidate.row + 0.5)

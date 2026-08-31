@@ -5,6 +5,7 @@ from app.domain.catchment import (
     MAX_CATCHMENT_AREA_M2,
     MIN_CATCHMENT_AREA_M2,
     _Candidate,
+    _find_depressions,
     _sample_candidates,
     _select_pond_site,
     analyze_catchment,
@@ -51,6 +52,37 @@ def test_sample_candidates_has_no_duplicate_positions():
     assert len(positions) == len(set(positions))
 
 
+# ---- _find_depressions: local minima on the RAW (unconditioned) grid ----
+
+
+def test_find_depressions_marks_a_true_local_minimum():
+    elevation = np.full((20, 20), 100.0)
+    elevation[10, 10] = 50.0  # a bowl -- lower than all 8 neighbors
+
+    depressions = _find_depressions(elevation, margin_rows=2, margin_cols=2)
+
+    assert depressions[10, 10]
+    assert not depressions[10, 11]  # a flat neighbor, not itself a local minimum
+
+
+def test_find_depressions_excludes_a_uniform_slope():
+    y, x = np.mgrid[0:20, 0:20]
+    elevation = (x + y).astype(np.float64)  # no local minima anywhere in the interior
+
+    depressions = _find_depressions(elevation, margin_rows=2, margin_cols=2)
+
+    assert not depressions[10, 10]
+
+
+def test_find_depressions_respects_the_margin():
+    elevation = np.full((20, 20), 100.0)
+    elevation[0, 0] = 1.0  # a real depression, but right on the edge
+
+    depressions = _find_depressions(elevation, margin_rows=3, margin_cols=3)
+
+    assert not depressions[0, 0]
+
+
 # ---- _select_pond_site: pure selection logic, catchment-area lookup faked ----
 
 
@@ -92,6 +124,50 @@ def test_select_pond_site_falls_back_to_the_closest_candidate_when_none_fit():
 def test_select_pond_site_raises_on_an_empty_candidate_list():
     with pytest.raises(ValueError):
         _select_pond_site([], lambda c: (None, 0.0))
+
+
+def test_select_pond_site_prefers_a_depression_over_higher_accumulation():
+    candidates = [
+        _Candidate(row=0, col=0, accumulation=100.0, is_depression=False),  # in range, higher accumulation
+        _Candidate(row=1, col=1, accumulation=20.0, is_depression=True),  # in range, a real depression
+    ]
+    mid = (MIN_CATCHMENT_AREA_M2 + MAX_CATCHMENT_AREA_M2) / 2
+    areas = {(0, 0): (None, mid), (1, 1): (None, mid)}
+
+    chosen, _mask, _area = _select_pond_site(candidates, lambda c: areas[(c.row, c.col)])
+
+    assert chosen.row == 1 and chosen.col == 1
+
+
+def test_select_pond_site_falls_back_to_non_depression_when_no_depression_fits():
+    candidates = [
+        _Candidate(row=0, col=0, accumulation=100.0, is_depression=False),  # in range
+        _Candidate(row=1, col=1, accumulation=20.0, is_depression=True),  # a depression, but way too big
+    ]
+    mid = (MIN_CATCHMENT_AREA_M2 + MAX_CATCHMENT_AREA_M2) / 2
+    areas = {(0, 0): (None, mid), (1, 1): (None, MAX_CATCHMENT_AREA_M2 * 10)}
+
+    chosen, _mask, _area = _select_pond_site(candidates, lambda c: areas[(c.row, c.col)])
+
+    assert chosen.row == 0 and chosen.col == 0
+
+
+def test_select_pond_site_only_traces_each_candidate_once():
+    # Regression guard: preferring depressions must not re-run the (expensive,
+    # real) catchment trace for a candidate already checked during the
+    # depression-only pass.
+    candidates = [_Candidate(row=1, col=1, accumulation=20.0, is_depression=True)]
+    mid = (MIN_CATCHMENT_AREA_M2 + MAX_CATCHMENT_AREA_M2) / 2
+    call_count = 0
+
+    def catchment_for(candidate):
+        nonlocal call_count
+        call_count += 1
+        return None, mid
+
+    _select_pond_site(candidates, catchment_for)
+
+    assert call_count == 1
 
 
 # ---- analyze_catchment: real pysheds D8 pipeline on synthetic terrain ----
