@@ -1,9 +1,13 @@
 """Parses a contour-line KML/KMZ (elevation contour lines as LineString
-Placemarks) into both an interpolated elevation grid, matching the shape
+Placemarks) into an interpolated elevation grid, matching the shape
 ElevationClient.get_dem_for_bbox produces (so the same catchment analysis
-can run on either input), and the original parsed line geometry, kept
+can run on either input); the original parsed line geometry, kept
 separately so callers can display the KML's own precision instead of the
-grid's lossy marching-squares re-trace (see analyze_contour.py).
+grid's lossy marching-squares re-trace (see analyze_contour.py); and a
+valid_mask marking which grid cells are genuinely interpolated from
+surveyed data vs. nearest-neighbor filler for gaps outside the KML's own
+coverage -- passed on to domain/catchment.py so extrapolated filler is
+never mistaken for a real depression (see docs/DECISIONS.md).
 """
 
 import io
@@ -93,7 +97,7 @@ def _extract_contour_lines(kml_bytes: bytes) -> list[ContourLine]:
 
 def parse_contour_kml(
     kml_bytes: bytes, grid_size: int = DEFAULT_GRID_SIZE
-) -> tuple[np.ndarray, BoundingBox, list[ContourLine]]:
+) -> tuple[np.ndarray, BoundingBox, list[ContourLine], np.ndarray]:
     kml_bytes = _load_kml_bytes(kml_bytes)
     lines = _extract_contour_lines(kml_bytes)
 
@@ -120,9 +124,14 @@ def parse_contour_kml(
 
     # Linear interpolation leaves NaN outside the convex hull of the input
     # points; fill those with nearest-neighbor so the grid has no gaps.
+    # valid_mask records which cells came from genuine linear interpolation
+    # (True) vs. this nearest-neighbor fallback (False) -- callers use it to
+    # avoid treating extrapolated filler as real terrain (see
+    # domain/catchment.py's analyze_catchment valid_mask parameter).
     nan_mask = np.isnan(elevation_grid)
+    valid_mask = ~nan_mask
     if nan_mask.any():
         nearest = griddata((lons, lats), elevations, (mesh_lon, mesh_lat), method="nearest")
         elevation_grid[nan_mask] = nearest[nan_mask]
 
-    return elevation_grid, bbox, lines
+    return elevation_grid, bbox, lines, valid_mask

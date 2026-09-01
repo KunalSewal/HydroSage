@@ -43,7 +43,7 @@ def _as_kmz(kml_bytes: bytes) -> bytes:
 
 
 def test_parse_contour_kml_returns_the_original_line_geometry():
-    _elevation, _bbox, lines = parse_contour_kml(_SAMPLE_KML)
+    _elevation, _bbox, lines, _valid_mask = parse_contour_kml(_SAMPLE_KML)
 
     assert lines == [
         ContourLine(elevation=250.0, points=[(74.60, 19.06), (74.61, 19.06), (74.61, 19.07)]),
@@ -53,7 +53,7 @@ def test_parse_contour_kml_returns_the_original_line_geometry():
 
 
 def test_parse_contour_kml_still_produces_an_interpolated_grid():
-    elevation, bbox, _lines = parse_contour_kml(_SAMPLE_KML, grid_size=20)
+    elevation, bbox, _lines, _valid_mask = parse_contour_kml(_SAMPLE_KML, grid_size=20)
 
     assert elevation.shape == (20, 20)
     assert bbox.min_lon == pytest.approx(74.60)
@@ -63,7 +63,7 @@ def test_parse_contour_kml_still_produces_an_interpolated_grid():
 def test_parse_contour_kml_accepts_a_kmz_archive():
     kmz_bytes = _as_kmz(_SAMPLE_KML)
 
-    _elevation, _bbox, lines = parse_contour_kml(kmz_bytes)
+    _elevation, _bbox, lines, _valid_mask = parse_contour_kml(kmz_bytes)
 
     assert len(lines) == 3
     assert lines[0].elevation == 250.0
@@ -96,3 +96,21 @@ def test_parse_contour_kml_rejects_a_kmz_entry_that_declares_an_oversized_uncomp
 
     with pytest.raises(ValueError, match="too large"):
         parse_contour_kml(kmz_bytes)
+
+
+def test_parse_contour_kml_returns_a_valid_mask_matching_the_grid_shape():
+    elevation, _bbox, _lines, valid_mask = parse_contour_kml(_SAMPLE_KML, grid_size=20)
+
+    assert valid_mask.shape == elevation.shape
+    assert valid_mask.dtype == bool
+
+
+def test_parse_contour_kml_valid_mask_is_false_outside_the_surveyed_convex_hull():
+    # The 3 sample lines all span the same narrow longitude band; the grid's
+    # bounding box corners at the extreme latitude rows fall well outside
+    # the triangulated convex hull of the input points, so at least one
+    # cell must be marked as nearest-neighbor-filled (not genuinely
+    # interpolated) rather than every cell being trivially True.
+    _elevation, _bbox, _lines, valid_mask = parse_contour_kml(_SAMPLE_KML, grid_size=20)
+
+    assert not valid_mask.all()

@@ -16,14 +16,14 @@ async def analyze_contour(file: UploadFile):
     kml_bytes = await file.read()
 
     try:
-        elevation, bbox, kml_lines = parse_contour_kml(kml_bytes)
+        elevation, bbox, kml_lines, valid_mask = parse_contour_kml(kml_bytes)
     except Exception as error:  # noqa: BLE001 -- translating any malformed-upload
         # failure (XML parse errors, bad coordinate values, a corrupted
         # KMZ zip, etc.) into a clean 422 rather than a 500, since this is
         # a user-uploaded file whose failure modes we don't fully control.
         raise HTTPException(status_code=422, detail=f"could not parse contour KML: {error}")
 
-    result = analyze_catchment(elevation, bbox)
+    result = analyze_catchment(elevation, bbox, valid_mask=valid_mask)
 
     # No "village" for an uploaded survey to hang a rainfall/land lookup off
     # -- use the bbox's own centroid, same idea as reverse-geocoding a click.
