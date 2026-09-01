@@ -38,7 +38,12 @@ MAX_KMZ_ENTRY_SIZE_BYTES = 200 * 1024 * 1024
 @dataclass(frozen=True)
 class ContourLine:
     elevation: float
-    points: list[tuple[float, float]]  # [(lon, lat), ...], in KML order
+    # (N, 2) array of [lon, lat] in KML order. An array rather than a list of
+    # tuples because a real survey carries ~160k vertices, which as Python
+    # tuples cost roughly 19 MB that stays alive all the way through the
+    # interpolation below -- memory this has to fit inside a 512 MB container
+    # (see docs/DECISIONS.md D-012).
+    points: np.ndarray
 
 
 def _load_kml_bytes(raw: bytes) -> bytes:
@@ -90,16 +95,21 @@ def _extract_contour_lines(kml_bytes: bytes) -> list[ContourLine]:
                 placemark.clear()
                 continue
 
-            points: list[tuple[float, float]] = []
+            flat: list[float] = []
             for vertex in coords_elem.text.split():
                 parts = vertex.split(",")
                 if len(parts) < 2:
                     continue
-                lon, lat = float(parts[0]), float(parts[1])
-                points.append((lon, lat))
+                flat.append(float(parts[0]))
+                flat.append(float(parts[1]))
 
-            if len(points) >= 2:
-                lines.append(ContourLine(elevation=elevation, points=points))
+            if len(flat) >= 4:
+                lines.append(
+                    ContourLine(
+                        elevation=elevation,
+                        points=np.asarray(flat, dtype=np.float64).reshape(-1, 2),
+                    )
+                )
 
         # Release the parsed element; without this iterparse still accumulates
         # the full tree and saves nothing.
@@ -128,8 +138,8 @@ def parse_contour_kml(
     offset = 0
     for line in lines:
         count = len(line.points)
-        lons[offset : offset + count] = [lon for lon, _ in line.points]
-        lats[offset : offset + count] = [lat for _, lat in line.points]
+        lons[offset : offset + count] = line.points[:, 0]
+        lats[offset : offset + count] = line.points[:, 1]
         elevations[offset : offset + count] = line.elevation
         offset += count
 
