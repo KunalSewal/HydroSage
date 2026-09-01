@@ -21,7 +21,7 @@ import logging
 from datetime import date
 
 from app.domain.land_availability import estimate_available_land
-from app.domain.pond import recommend_pond_dimensions
+from app.domain.pond import size_pond_from_terrain_capacity
 from app.domain.rainfall import summarize_rainfall
 from app.domain.runoff import estimate_annual_runoff_volume
 from app.infrastructure.elevation_client import BoundingBox
@@ -72,7 +72,7 @@ def compute_recommendation_fields(
         average_annual_rainfall_mm=rainfall.average_annual_mm,
         catchment_area_m2=catchment_area_m2,
     )
-    pond = recommend_pond_dimensions(target_storage_m3=runoff.runoff_volume_m3)
+    pond_options = size_pond_from_terrain_capacity(achievable_volume_m3_by_depth)
     available_land_m2 = _get_available_land_hectares(bbox)
 
     return RecommendationFieldsOut(
@@ -85,13 +85,13 @@ def compute_recommendation_fields(
                 surface_area_m2=o.surface_area_m2,
                 side_length_m=o.side_length_m,
                 fits_available_land=(o.surface_area_m2 <= available_land_m2) if available_land_m2 is not None else None,
-                fits_terrain_capacity=(
-                    achievable_volume_m3_by_depth[o.depth_m] >= runoff.runoff_volume_m3
-                    if o.depth_m in achievable_volume_m3_by_depth
+                annual_runoff_capture_fraction=(
+                    achievable_volume_m3_by_depth[o.depth_m] / runoff.runoff_volume_m3
+                    if runoff.runoff_volume_m3 > 0
                     else None
                 ),
             )
-            for o in pond.options
+            for o in pond_options
         ],
         available_land_hectares=(available_land_m2 / 10_000) if available_land_m2 is not None else None,
     )
