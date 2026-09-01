@@ -61,3 +61,29 @@ def recommend_pond_dimensions(
     ]
 
     return PondRecommendation(target_storage_m3=target_storage_m3, options=options)
+
+
+def size_pond_from_terrain_capacity(
+    achievable_volume_m3_by_depth: dict[float, float],
+) -> list[PondOption]:
+    """Back-solves a flat square footprint at each candidate depth from
+    the site's own real terrain-holding capacity at that depth
+    (domain/catchment.py's flood-fill), rather than an aspirational
+    demand target. This answers a different question than
+    recommend_pond_dimensions above: not "how big must the pond be to
+    capture a year's runoff" but "how big can the pond actually be at
+    this site" -- the two diverge whenever the catchment is large enough
+    that capturing its full annual runoff would mean an unrealistic,
+    reservoir-scale pond (see docs/DECISIONS.md D-007). This is the
+    app's primary pond-sizing entry point (see services/recommendation.py);
+    recommend_pond_dimensions remains available for a target-volume use
+    case, but is no longer how the app's own recommendation is sized.
+    """
+    return [
+        PondOption(
+            depth_m=depth,
+            surface_area_m2=(area := volume / depth),
+            side_length_m=area**0.5,
+        )
+        for depth, volume in sorted(achievable_volume_m3_by_depth.items())
+    ]
