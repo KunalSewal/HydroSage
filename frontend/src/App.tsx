@@ -18,6 +18,11 @@ function App() {
   const { state, selectPoint, analyze, getFullRecommendation } = useSiteSelection()
   const { state: uploadState, upload, reset: resetUpload } = useContourUpload()
   const [isDropZoneOpen, setIsDropZoneOpen] = useState(false)
+  // Measured by whichever BottomSheet is mounted, so the map can fit the
+  // catchment into the strip left visible above it. setState is passed
+  // directly because its identity is stable -- an inline arrow here would
+  // re-run the sheet's measuring effect on every render.
+  const [sheetHeight, setSheetHeight] = useState(0)
 
   // Once a file's been chosen and is uploading/analyzed/erroring, that
   // result takes over the map and bottom sheet -- entry is now via the
@@ -69,6 +74,7 @@ function App() {
         catchmentBoundary={catchmentBoundary}
         pondLocation={pondLocation}
         fitBoundsTo={fitBoundsTo}
+        sheetHeight={sheetHeight}
         geoRequestId={geoRequestId}
       />
 
@@ -82,7 +88,7 @@ function App() {
       {showIdleHint && <IdleHint />}
 
       {showSiteSheet && (
-        <BottomSheet expandable={state.status === 'analyzed'}>
+        <BottomSheet expandable={state.status === 'analyzed'} onHeightChange={setSheetHeight}>
           <SitePanel
             state={state}
             onAnalyze={analyze}
@@ -93,7 +99,7 @@ function App() {
       )}
 
       {showUploadSheet && (
-        <BottomSheet expandable={uploadState.status === 'analyzed'}>
+        <BottomSheet expandable={uploadState.status === 'analyzed'} onHeightChange={setSheetHeight}>
           <UploadPanel state={uploadState} onRetry={handleUploadRetry} />
         </BottomSheet>
       )}

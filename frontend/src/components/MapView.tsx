@@ -1,9 +1,10 @@
 import 'leaflet/dist/leaflet.css'
 import L from 'leaflet'
 import { useEffect, useMemo, useState } from 'react'
-import { MapContainer, Marker, Polygon, Polyline, TileLayer, useMap, useMapEvents } from 'react-leaflet'
+import { MapContainer, Marker, Polygon, Polyline, TileLayer, ZoomControl, useMap, useMapEvents } from 'react-leaflet'
 import type { BoundingBox, Contour } from '../api/client'
 import { contourColor } from '../lib/contourColor'
+import { resolveFocusBounds, type FocusBounds } from '../lib/mapFocus'
 
 // A fresh element per distinct position (see the `key` on <Marker> below)
 // is required for the CSS mount animation to replay on every new click —
@@ -32,6 +33,9 @@ interface MapViewProps {
   catchmentBoundary?: [number, number][] | null
   pondLocation?: { lat: number; lon: number } | null
   fitBoundsTo?: BoundingBox | null
+  // Measured height of the results sheet overlaying the bottom of the map, so
+  // a fitted catchment can be kept in the strip still visible above it.
+  sheetHeight?: number
   // Bumped by useGeolocation on every locate() completion, even when the
   // resulting position is unchanged -- see RecenterOnChange below for why
   // this needs to be a separate signal from the position itself.
@@ -123,19 +127,52 @@ function RecenterOnChange({ position, nonce }: { position: { lat: number; lon: n
   return null
 }
 
-// Used by the KML-upload flow: there's no GPS/click point to recenter on,
-// so the map jumps to fit the uploaded contour map's actual coverage area.
-function FitBounds({ bbox }: { bbox: BoundingBox }) {
+// Clearance for the floating chrome that sits over the map, so a fitted
+// catchment lands in the space actually visible rather than behind the
+// search bar or the results sheet.
+const TOP_CHROME_PADDING_PX = 80 // TopBar / logo / locate button
+const SIDE_PADDING_PX = 28
+const SHEET_GAP_PX = 20 // breathing room between the catchment and the sheet's top edge
+
+// The sheet animates its height over 450ms and ResizeObserver reports every
+// intermediate frame; re-fitting on each one would make the map fight the
+// animation. Waiting for the height to settle yields a single, smooth fit.
+const FIT_SETTLE_MS = 180
+
+// A farm-pond catchment is only ~200m across, and fitting one edge-to-edge
+// lands at street level with no surrounding landscape to place it in. Capping
+// the zoom leaves it filling roughly half the visible strip, with context.
+// Larger catchments fit below this and are unaffected.
+const MAX_FIT_ZOOM = 17
+
+// Frames whatever the analysis produced -- the traced catchment when there is
+// one, otherwise the uploaded sheet's extent (see lib/mapFocus). The bottom
+// padding tracks the results sheet's measured height so the catchment stays
+// clear of it as it expands.
+function FitFocusBounds({ bounds, sheetHeight }: { bounds: FocusBounds; sheetHeight: number }) {
   const map = useMap()
+  const [south, west] = bounds[0]
+  const [north, east] = bounds[1]
+
   useEffect(() => {
-    map.fitBounds(
-      [
-        [bbox.min_lat, bbox.min_lon],
-        [bbox.max_lat, bbox.max_lon],
-      ],
-      { padding: [32, 32] },
-    )
-  }, [bbox.min_lat, bbox.min_lon, bbox.max_lat, bbox.max_lon, map])
+    const timer = setTimeout(() => {
+      map.fitBounds(
+        [
+          [south, west],
+          [north, east],
+        ],
+        {
+          paddingTopLeft: [SIDE_PADDING_PX, TOP_CHROME_PADDING_PX],
+          paddingBottomRight: [SIDE_PADDING_PX, sheetHeight + SHEET_GAP_PX],
+          maxZoom: MAX_FIT_ZOOM,
+          animate: true,
+          duration: 0.6,
+        },
+      )
+    }, FIT_SETTLE_MS)
+    return () => clearTimeout(timer)
+  }, [south, west, north, east, sheetHeight, map])
+
   return null
 }
 
@@ -147,17 +184,24 @@ export default function MapView({
   catchmentBoundary,
   pondLocation,
   fitBoundsTo,
+  sheetHeight = 0,
   geoRequestId,
 }: MapViewProps) {
+  const focusBounds = resolveFocusBounds(catchmentBoundary, fitBoundsTo)
+
   return (
-    <MapContainer center={[center.lat, center.lon]} zoom={12} className="h-full w-full">
+    // Leaflet's zoom control defaults to the top left, directly under the
+    // HydroSage brand mark; moved to the top right where it stacks below the
+    // locate button as a single control cluster (see index.css for the offset).
+    <MapContainer center={[center.lat, center.lon]} zoom={12} zoomControl={false} className="h-full w-full">
       <TileLayer
         attribution="Tiles &copy; Esri"
         url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
       />
+      <ZoomControl position="topright" />
       <ClickHandler onMapClick={onMapClick} />
-      {fitBoundsTo ? (
-        <FitBounds bbox={fitBoundsTo} />
+      {focusBounds ? (
+        <FitFocusBounds bounds={focusBounds} sheetHeight={sheetHeight} />
       ) : (
         <RecenterOnChange position={markerPosition ?? center} nonce={markerPosition ? undefined : geoRequestId} />
       )}
