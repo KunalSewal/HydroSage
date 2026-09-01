@@ -1,10 +1,14 @@
-"""Recommends pond depth and surface-area/storage capacity from a target
-runoff volume, per PROJECT_BRIEF.md core use case #7. Storage is targeted
-to equal the annual runoff volume (domain/runoff.py) -- the pond is sized
-to capture a season/year's worth of catchment runoff -- then surface area
-is back-solved for a small set of practical depths, matching
-ARCHITECTURE.md's "back-calculating surface area within a practical depth
-range" rather than a single fixed answer.
+"""Two pond-sizing models, per PROJECT_BRIEF.md core use case #7.
+
+`size_pond_from_terrain_capacity` is the app's primary sizing path (see
+services/recommendation.py): each candidate depth's storage volume comes
+from that depth's own real terrain-holding capacity (domain/catchment.py's
+flood-fill), not an aspirational target -- see docs/DECISIONS.md D-007 for
+why. `recommend_pond_dimensions` is the earlier, demand-driven model
+(storage targeted to equal one year's estimated catchment runoff, back-
+solved into a footprint at a small set of practical depths); it's kept as
+an available utility for a target-volume use case, but is no longer how
+the app's own recommendation is sized.
 
 Assumes a simple flat-bottomed, square footprint (no side-slope/
 trapezoidal correction) -- a documented simplification, not an excavation
@@ -78,6 +82,12 @@ def size_pond_from_terrain_capacity(
     app's primary pond-sizing entry point (see services/recommendation.py);
     recommend_pond_dimensions remains available for a target-volume use
     case, but is no longer how the app's own recommendation is sized.
+
+    Note: surface_area_m2 describes a flat-bottomed square footprint sized to
+    hold this depth's achievable volume (the excavation you'd dig), not the
+    flood-fill's own traced inundation shape at that depth -- an irregular
+    basin's actual water surface at a given depth is generally larger than
+    volume/depth would suggest for a flat-bottomed prism.
     """
     return [
         PondOption(

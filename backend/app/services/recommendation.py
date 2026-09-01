@@ -85,7 +85,7 @@ def compute_recommendation_fields(
                 surface_area_m2=o.surface_area_m2,
                 side_length_m=o.side_length_m,
                 fits_available_land=(o.surface_area_m2 <= available_land_m2) if available_land_m2 is not None else None,
-                annual_runoff_capture_fraction=(
+                runoff_capture_ratio=(
                     achievable_volume_m3_by_depth[o.depth_m] / runoff.runoff_volume_m3
                     if runoff.runoff_volume_m3 > 0
                     else None
