@@ -17,6 +17,7 @@ from dataclasses import dataclass
 
 import numpy as np
 from scipy.interpolate import griddata
+from scipy.spatial import cKDTree
 
 from app.infrastructure.elevation_client import BoundingBox
 
@@ -65,32 +66,44 @@ def _load_kml_bytes(raw: bytes) -> bytes:
 
 
 def _extract_contour_lines(kml_bytes: bytes) -> list[ContourLine]:
-    root = ET.fromstring(kml_bytes)
+    """Streams the document rather than building a whole ElementTree.
+
+    A survey KML is mostly coordinate text -- the sample file expands from
+    6.7 MB on disk to roughly 130 MB as a parsed tree, which matters because
+    the analysis runs inside a 512 MB container (see docs/DECISIONS.md
+    D-012). Clearing each Placemark once it has been read keeps only the
+    extracted lines in memory. Output is identical to the tree-based parse.
+    """
     lines: list[ContourLine] = []
 
-    for placemark in root.iter(f"{{{_KML_NS_URI}}}Placemark"):
+    for _event, placemark in ET.iterparse(io.BytesIO(kml_bytes), events=("end",)):
+        if placemark.tag != f"{{{_KML_NS_URI}}}Placemark":
+            continue
+
         name_elem = placemark.find("kml:name", _KML_NS)
-        if name_elem is None or name_elem.text is None:
-            continue
-        try:
-            elevation = float(name_elem.text)
-        except ValueError:
-            continue
-
         coords_elem = placemark.find(".//kml:LineString/kml:coordinates", _KML_NS)
-        if coords_elem is None or coords_elem.text is None:
-            continue
 
-        points: list[tuple[float, float]] = []
-        for vertex in coords_elem.text.split():
-            parts = vertex.split(",")
-            if len(parts) < 2:
+        if name_elem is not None and name_elem.text is not None and coords_elem is not None and coords_elem.text is not None:
+            try:
+                elevation = float(name_elem.text)
+            except ValueError:
+                placemark.clear()
                 continue
-            lon, lat = float(parts[0]), float(parts[1])
-            points.append((lon, lat))
 
-        if len(points) >= 2:
-            lines.append(ContourLine(elevation=elevation, points=points))
+            points: list[tuple[float, float]] = []
+            for vertex in coords_elem.text.split():
+                parts = vertex.split(",")
+                if len(parts) < 2:
+                    continue
+                lon, lat = float(parts[0]), float(parts[1])
+                points.append((lon, lat))
+
+            if len(points) >= 2:
+                lines.append(ContourLine(elevation=elevation, points=points))
+
+        # Release the parsed element; without this iterparse still accumulates
+        # the full tree and saves nothing.
+        placemark.clear()
 
     return lines
 
@@ -101,13 +114,24 @@ def parse_contour_kml(
     kml_bytes = _load_kml_bytes(kml_bytes)
     lines = _extract_contour_lines(kml_bytes)
 
-    points = [(lon, lat, line.elevation) for line in lines for lon, lat in line.points]
-    if len(points) < 3:
+    total_points = sum(len(line.points) for line in lines)
+    if total_points < 3:
         raise ValueError("KML has too few contour points to interpolate a surface")
 
-    lons = np.array([p[0] for p in points])
-    lats = np.array([p[1] for p in points])
-    elevations = np.array([p[2] for p in points])
+    # Filled column-wise straight from `lines` rather than via an intermediate
+    # list of ~160k Python tuples, which for the sample file is ~20 MB that
+    # would still be alive during the interpolation below -- the peak this
+    # whole function is budgeted against (docs/DECISIONS.md D-012).
+    lons = np.empty(total_points, dtype=np.float64)
+    lats = np.empty(total_points, dtype=np.float64)
+    elevations = np.empty(total_points, dtype=np.float64)
+    offset = 0
+    for line in lines:
+        count = len(line.points)
+        lons[offset : offset + count] = [lon for lon, _ in line.points]
+        lats[offset : offset + count] = [lat for _, lat in line.points]
+        elevations[offset : offset + count] = line.elevation
+        offset += count
 
     bbox = BoundingBox(
         min_lon=float(lons.min()),
@@ -131,7 +155,12 @@ def parse_contour_kml(
     nan_mask = np.isnan(elevation_grid)
     valid_mask = ~nan_mask
     if nan_mask.any():
-        nearest = griddata((lons, lats), elevations, (mesh_lon, mesh_lat), method="nearest")
-        elevation_grid[nan_mask] = nearest[nan_mask]
+        # Queried only for the cells that are actually NaN -- a small fraction
+        # of the grid (2,744 of 90,000 for the sample file). griddata's own
+        # "nearest" method would build the same tree but evaluate all 90,000
+        # cells and discard almost every result. Values are identical.
+        tree = cKDTree(np.column_stack([lons, lats]))
+        _distances, indices = tree.query(np.column_stack([mesh_lon[nan_mask], mesh_lat[nan_mask]]))
+        elevation_grid[nan_mask] = elevations[indices]
 
     return elevation_grid, bbox, lines, valid_mask

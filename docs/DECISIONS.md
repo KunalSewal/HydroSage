@@ -187,3 +187,29 @@ Status: Accepted
 **Rationale:** The catchment analysis is computed entirely from the uploaded survey and depends on no external service, so no external service should be able to suppress it. Returning a partial answer with explicitly null fields is more honest and more useful than a 500 — a reader can see exactly which figures were unavailable and why the sizing bound changed. Sizing by terrain alone when runoff is unknown is the physically defensible fallback: it reports the capacity that *was* measured rather than inventing a rainfall figure.
 
 **Impact:** `POST /analyzeContour` now requires the field name `contour_map`; the previous name `file` is rejected. Three response fields become nullable. Verified live against the real sample KML while Open-Meteo was actively returning 429: HTTP 200 with catchment 4.35 ha, 457 cells matching 457 accumulation, 1355 contour lines, a 53-point boundary, and terrain-limited pond options of 62.9 m / 83.4 m / 108.6 m squares, with the three rainfall-derived fields null. The frontend renders "Rainfall data unavailable — sizing by terrain capacity only" in that state instead of `NaNmm/yr`.
+
+---
+
+## D-012: Fit the contour analysis inside a 512 MB container
+
+Date: 2026-09-02
+Status: Accepted
+
+**Context:** The Phase 1 deployment host caps each student container at 512 MB (`/sys/fs/cgroup/memory.max` reports 536870912). `POST /analyzeContour` was killed by the cgroup OOM killer on the first real request with the sample map, taking the whole tmux process group with it and leaving the submitted URL returning connection-refused. `free -h` inside the container reports the *host's* 125 GB and is actively misleading; the cgroup file is the only trustworthy figure. `dmesg` is empty because a container cannot read the host kernel log, so the absence of an OOM message is not evidence against one.
+
+Measured peak for one request through `app.main` was **538.8 MB** against the 512 MB cap — a deficit of 27 MB, and that measurement was taken with numba's JIT cache already warm. On the deployment host the first request also compiles the pysheds routing kernels through LLVM, which is why the crash came at 5.8 s, early in the request rather than during flow routing.
+
+Profiling located the cost precisely. Imports account for 323 MB, of which `pysheds.grid` alone is 159 MB (it pulls rasterio and scikit-image transitively) and `scipy.interpolate` a further 45 MB. Of the request's transient memory, the linear `griddata` interpolation over the sample file's 159,113 contour vertices is +153 MB; everything else is minor — D8 routing +10 MB, building the contours list +0.6 MB, pydantic validation +9.6 MB, JSON serialisation +5.6 MB. An early suspicion that serialising 159k coordinate pairs dominated was measured and disproven.
+
+**Decision:** Four behaviour-preserving reductions, chosen specifically because the demonstration figures in the Phase 1 report were already submitted and must remain accurate:
+
+1. `_extract_contour_lines` streams the document with `ET.iterparse`, clearing each `Placemark` after reading it, instead of materialising the whole tree (the 6.7 MB file expands to roughly 130 MB parsed).
+2. `parse_contour_kml` fills the coordinate arrays column-wise directly from the parsed lines, dropping an intermediate list of ~160k Python tuples.
+3. The nearest-neighbour gap fill uses a `cKDTree` queried only for the cells that are actually NaN (2,744 of 90,000 for the sample file) rather than `griddata`'s `nearest` method, which builds the same tree but evaluates every cell and discards almost all of it.
+4. A new `app/analyze_only.py` entrypoint mounts only the contour router, dropping the SQLAlchemy, GeoAlchemy2, Celery and MinIO imports that `app.main`'s other six routers pull in for services not deployed alongside this endpoint.
+
+Reducing the interpolation grid below 300×300, or subsampling the contour vertices, were both rejected. Either would have changed the interpolated surface and therefore the catchment area, cell count and pond dimensions already published in the report. At ~1.77 vertices per grid cell the input is not meaningfully oversampled, so subsampling would also have discarded real survey detail rather than redundancy.
+
+**Impact:** Measured peak falls from 538.8 MB to **496.6 MB**, fitting the cap with 15.4 MB to spare. Every published figure is unchanged and was re-verified exactly: catchment 4.353 ha, 457 cells matching 457 accumulation, 1,355 contour lines, a 53-point boundary, and the pond location identical to the last digit. `app.main` is untouched and remains the full application for local development and full-stack deployment.
+
+**Accepted risk:** 15.4 MB of headroom is thin, and the deployment host's first request pays an LLVM compilation cost this measurement does not capture. The deployment therefore also sets `MALLOC_ARENA_MAX=2` — glibc otherwise allocates per-thread arenas that inflate RSS without adding live data — and runs uvicorn under a restart loop, so that a memory kill costs one request rather than leaving the endpoint permanently down.
