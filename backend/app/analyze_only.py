@@ -21,6 +21,8 @@ import ctypes
 import ctypes.util
 import gc
 import logging
+import os
+import signal
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -65,6 +67,14 @@ def _load_malloc_trim():
 
 
 _malloc_trim = _load_malloc_trim()
+
+
+# Restart once the resident floor leaves too little room for the next
+# analysis's ~170 MB of transient allocation inside the 512 MB cap. Tunable
+# without a redeploy, since the right value depends on the host: raise it if
+# the server recycles after every request, lower it if it is still being
+# OOM-killed.
+_RECYCLE_ABOVE_MB = float(os.environ.get("RECYCLE_ABOVE_MB", "335"))
 
 
 def _rss_mb() -> float | None:
@@ -118,6 +128,24 @@ async def release_memory_after_request(request: Request, call_next):
             # the only visibility into memory on a host where the container is
             # capped at 512 MB and an overrun is a SIGKILL with no traceback.
             logger.warning("memory: %.0f MB -> %.0f MB after reclaim (cap 512 MB)", before, after)
+
+        if after is not None and after > _RECYCLE_ABOVE_MB:
+            # An analysis needs roughly 170 MB of transient headroom. Once the
+            # resident floor is high enough that the *next* request would not
+            # fit, restarting now is strictly better than being SIGKILLed
+            # mid-request later: this response has already been produced and
+            # sent, so nothing in flight is lost, whereas an OOM kill during a
+            # request loses that caller's answer entirely.
+            #
+            # The supervising loop restarts the server (see the deployment
+            # command in docs/PHASE1_REPORT.md). SIGTERM rather than os._exit
+            # so uvicorn closes its listening socket and finishes the response.
+            logger.warning(
+                "resident %.0f MB exceeds the %.0f MB recycle threshold; restarting to reclaim",
+                after,
+                _RECYCLE_ABOVE_MB,
+            )
+            os.kill(os.getpid(), signal.SIGTERM)
     return response
 
 
