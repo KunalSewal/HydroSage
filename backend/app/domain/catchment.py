@@ -39,14 +39,21 @@ logger = logging.getLogger(__name__)
 EDGE_MARGIN_FRACTION = 0.05
 METERS_PER_DEGREE_LAT = 111_320.0
 
-# A realistic catchment scale for a small farm/community pond under Indian
-# watershed-development practice -- most farm ponds serve a few hectares;
-# larger community ponds/check dams might serve a few tens of hectares.
-# Not the single "correct" number (no such thing without a real, sited
-# survey), but a documented, literature-grounded range that keeps the
-# recommendation plausible instead of claiming a third of the map tile.
+# The catchment scale this app deliberately targets: a farm pond under
+# Indian watershed-development practice, which serves a few hectares.
+#
+# This band used to run to 50 hectares, which spans two different
+# interventions -- a farm pond (a dug excavation) and a check dam or
+# percolation tank (a bund across a drainage line, serving tens of
+# hectares). At the top of that range the analysis correctly returned a
+# check-dam-scale structure, which then read as an absurd "pond": a
+# 26 ha catchment produced a 250m-square recommendation. Narrowing the
+# band makes site selection look for sites at the scale this app
+# actually models. The trade-off is accepted and real: the app no longer
+# recommends check-dam or percolation-tank scale structures at all.
+# See docs/DECISIONS.md D-010.
 MIN_CATCHMENT_AREA_M2 = 10_000  # 1 hectare
-MAX_CATCHMENT_AREA_M2 = 500_000  # 50 hectares
+MAX_CATCHMENT_AREA_M2 = 50_000  # 5 hectares
 
 # How many points to sample across the interior when searching for a pond
 # site -- a coarse grid, not every pixel, since each candidate costs a
