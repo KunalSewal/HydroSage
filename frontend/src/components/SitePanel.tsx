@@ -165,14 +165,23 @@ export default function SitePanel({ state, onAnalyze, onRetry, onGetRecommendati
                       <div className="flex items-center gap-2">
                         <CloudRain className="h-4 w-4 text-hs-teal" />
                         <span>
-                          {Math.round(state.recommendation.average_annual_rainfall_mm)}mm/yr avg rainfall &rarr;{' '}
-                          {Math.round(state.recommendation.runoff_volume_m3).toLocaleString()} m&sup3; runoff/yr
+                          {state.recommendation.average_annual_rainfall_mm === null ||
+                          state.recommendation.runoff_volume_m3 === null ? (
+                            <span className="text-hs-muted">
+                              Rainfall data unavailable &mdash; sizing by terrain capacity only
+                            </span>
+                          ) : (
+                            <>
+                              {Math.round(state.recommendation.average_annual_rainfall_mm)}mm/yr avg rainfall &rarr;{' '}
+                              {Math.round(state.recommendation.runoff_volume_m3).toLocaleString()} m&sup3; runoff/yr
+                            </>
+                          )}
                         </span>
                       </div>
                       <div className="flex items-start gap-2">
                         <Ruler className="mt-0.5 h-4 w-4 text-hs-teal" />
                         <div className="flex flex-col gap-1">
-                          <span className="text-xs text-hs-muted">Pond size options (storage = annual runoff):</span>
+                          <span className="text-xs text-hs-muted">Pond size options (limited by terrain capacity and annual runoff):</span>
                           {state.recommendation.pond_options.map((option) => (
                             <div key={option.depth_m} className="flex items-center gap-1.5 text-xs">
                               <span className="font-medium text-hs-cream">

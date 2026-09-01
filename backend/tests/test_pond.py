@@ -1,6 +1,6 @@
 import pytest
 
-from app.domain.pond import CANDIDATE_DEPTHS_M, recommend_pond_dimensions
+from app.domain.pond import CANDIDATE_DEPTHS_M, capture_ratio, recommend_pond_dimensions, size_pond_options
 
 
 def test_recommend_pond_dimensions_back_solves_area_from_volume_and_depth():
@@ -50,3 +50,93 @@ def test_recommend_pond_dimensions_rejects_a_non_positive_depth():
 def test_recommend_pond_dimensions_rejects_an_empty_depth_list():
     with pytest.raises(ValueError, match="depth"):
         recommend_pond_dimensions(target_storage_m3=1000, candidate_depths_m=())
+
+
+def test_size_pond_options_uses_terrain_capacity_when_it_is_the_smaller_bound():
+    # Terrain holds less than the catchment delivers -> terrain binds.
+    options = size_pond_options({2.0: 4000.0, 3.0: 9000.0}, annual_runoff_m3=1_000_000.0)
+    by_depth = {o.depth_m: o for o in options}
+
+    assert by_depth[2.0].surface_area_m2 == pytest.approx(2000.0)
+    assert by_depth[2.0].side_length_m == pytest.approx(2000.0**0.5)
+    assert by_depth[3.0].surface_area_m2 == pytest.approx(3000.0)
+    assert by_depth[3.0].side_length_m == pytest.approx(3000.0**0.5)
+
+
+def test_size_pond_options_uses_annual_runoff_when_it_is_the_smaller_bound():
+    # The catchment delivers less than the terrain could hold -> runoff binds,
+    # and a pond bigger than the water available to fill it is wasted digging.
+    options = size_pond_options({2.0: 400_000.0, 4.0: 800_000.0}, annual_runoff_m3=10_000.0)
+    by_depth = {o.depth_m: o for o in options}
+
+    assert by_depth[2.0].surface_area_m2 == pytest.approx(5000.0)   # 10_000 / 2
+    assert by_depth[4.0].surface_area_m2 == pytest.approx(2500.0)   # 10_000 / 4
+
+
+def test_size_pond_options_applies_the_bound_independently_at_each_depth():
+    # Terrain binds at 2m, runoff binds at 4m, within one call.
+    options = size_pond_options({2.0: 6000.0, 4.0: 900_000.0}, annual_runoff_m3=40_000.0)
+    by_depth = {o.depth_m: o for o in options}
+
+    assert by_depth[2.0].surface_area_m2 == pytest.approx(3000.0)    # terrain: 6000 / 2
+    assert by_depth[4.0].surface_area_m2 == pytest.approx(10_000.0)  # runoff: 40_000 / 4
+
+
+def test_size_pond_options_never_sizes_beyond_the_annual_runoff():
+    # The invariant the runoff bound introduces: stored volume can never
+    # exceed a year's runoff, so runoff_capture_ratio can never exceed 1.0.
+    runoff = 25_000.0
+    options = size_pond_options({2.0: 1e9, 3.0: 1e9, 4.0: 1e9}, annual_runoff_m3=runoff)
+
+    for option in options:
+        assert option.surface_area_m2 * option.depth_m <= runoff + 1e-6
+
+
+def test_size_pond_options_returns_options_sorted_by_depth():
+    options = size_pond_options({4.0: 8000.0, 2.0: 4000.0, 3.0: 6000.0}, annual_runoff_m3=1e9)
+    assert [o.depth_m for o in options] == [2.0, 3.0, 4.0]
+
+
+def test_capture_ratio_never_exceeds_one_for_runoff_limited_options():
+    # The runoff bound means stored volume can never exceed a year's runoff,
+    # so the ratio must be exactly 1.0 -- not a hair above it, which is what
+    # reconstructing the volume from area x depth used to produce.
+    for runoff in (10_000.0, 15_401.0, 92_574.3, 1_234.567):
+        for option in size_pond_options({2.0: 1e9, 3.0: 1e9, 4.0: 1e9}, annual_runoff_m3=runoff):
+            assert capture_ratio(option, runoff) <= 1.0
+
+
+def test_capture_ratio_reports_the_terrain_limited_share():
+    option = size_pond_options({2.0: 4000.0}, annual_runoff_m3=10_000.0)[0]
+    assert capture_ratio(option, 10_000.0) == pytest.approx(0.4)
+
+
+def test_capture_ratio_is_none_when_there_is_no_runoff():
+    option = size_pond_options({2.0: 4000.0}, annual_runoff_m3=0.0)[0]
+    assert capture_ratio(option, 0.0) is None
+
+
+def test_size_pond_options_records_the_bounded_volume_on_each_option():
+    options = size_pond_options({2.0: 6000.0, 4.0: 900_000.0}, annual_runoff_m3=40_000.0)
+    by_depth = {o.depth_m: o for o in options}
+
+    assert by_depth[2.0].volume_m3 == pytest.approx(6000.0)    # terrain-limited
+    assert by_depth[4.0].volume_m3 == pytest.approx(40_000.0)  # runoff-limited
+
+
+# The rainfall API is a third-party service that can be rate-limited or
+# firewalled off entirely. Catchment analysis doesn't depend on it, so a
+# rainfall outage must degrade the runoff bound rather than fail the
+# request -- see docs/DECISIONS.md D-011.
+def test_size_pond_options_falls_back_to_terrain_capacity_when_runoff_is_unknown():
+    options = size_pond_options({2.0: 8000.0, 3.0: 21_000.0}, annual_runoff_m3=None)
+    by_depth = {o.depth_m: o for o in options}
+
+    assert by_depth[2.0].volume_m3 == pytest.approx(8000.0)
+    assert by_depth[3.0].volume_m3 == pytest.approx(21_000.0)
+    assert by_depth[2.0].surface_area_m2 == pytest.approx(4000.0)
+
+
+def test_capture_ratio_is_none_when_runoff_is_unknown():
+    option = size_pond_options({2.0: 4000.0}, annual_runoff_m3=None)[0]
+    assert capture_ratio(option, None) is None

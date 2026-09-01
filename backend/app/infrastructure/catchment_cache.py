@@ -51,7 +51,11 @@ class CatchmentCache:
 
         try:
             payload = raw.decode() if isinstance(raw, bytes) else raw
-            return CatchmentResult(**json.loads(payload))
+            data = json.loads(payload)
+            data["achievable_volume_m3_by_depth"] = {
+                float(depth): volume for depth, volume in data["achievable_volume_m3_by_depth"].items()
+            }
+            return CatchmentResult(**data)
         except Exception:  # noqa: BLE001 -- a corrupted/stale entry must not break the request
             logger.warning("catchment cache entry unreadable, will recompute", exc_info=True)
             return None

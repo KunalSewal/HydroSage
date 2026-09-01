@@ -13,6 +13,7 @@ _RESULT = CatchmentResult(
     catchment_cell_count=42,
     flow_accumulation_at_pond=999.0,
     catchment_boundary=[[81.28, 21.24], [81.29, 21.25], [81.28, 21.24]],
+    achievable_volume_m3_by_depth={2.0: 5_000.0, 3.0: 6_500.0, 4.0: 7_000.0},
 )
 
 
@@ -59,7 +60,7 @@ def test_different_villages_do_not_collide():
     cache = CatchmentCache(fake)
     other = CatchmentResult(
         pond_lat=1.0, pond_lon=2.0, catchment_area_m2=1.0, catchment_cell_count=1,
-        flow_accumulation_at_pond=1.0, catchment_boundary=[],
+        flow_accumulation_at_pond=1.0, catchment_boundary=[], achievable_volume_m3_by_depth={},
     )
 
     cache.put("village-1", _RESULT)
