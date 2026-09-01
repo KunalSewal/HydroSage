@@ -21,6 +21,8 @@ import ctypes
 import ctypes.util
 import gc
 import logging
+import os
+import signal
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,6 +31,18 @@ from app.api import analyze_contour
 from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+# uvicorn installs its own logging configuration when it starts, and an app
+# logger that merely propagates can end up with nothing attached to it. On this
+# deployment the memory trace below is the only diagnostic available -- the
+# container is capped at 512 MB and an overrun arrives as SIGKILL with no
+# traceback -- so the handler is attached explicitly rather than inherited.
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(levelname)s:     [hydrosage] %(message)s"))
+    logger.addHandler(_handler)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
 
 settings = get_settings()
 
@@ -45,17 +59,46 @@ def _load_malloc_trim():
     Absent on Windows and macOS, where this is a no-op and the caller simply
     relies on gc.
     """
-    try:
-        libc_name = ctypes.util.find_library("c")
-        if libc_name is None:
-            return None
-        libc = ctypes.CDLL(libc_name)
-        return libc.malloc_trim
-    except (OSError, AttributeError):
-        return None
+    # find_library("c") shells out to ldconfig/gcc and returns None on a slim
+    # container that has neither -- which is exactly where this matters most,
+    # so the well-known soname is tried directly as well.
+    candidates = [ctypes.util.find_library("c"), "libc.so.6", "libc.so"]
+    for name in candidates:
+        if name is None:
+            continue
+        try:
+            trim = ctypes.CDLL(name).malloc_trim
+        except (OSError, AttributeError):
+            continue
+        trim.argtypes = [ctypes.c_size_t]
+        trim.restype = ctypes.c_int
+        logger.info("malloc_trim resolved via %s", name)
+        return trim
+    logger.warning("malloc_trim unavailable; freed heap will not be returned to the OS")
+    return None
 
 
 _malloc_trim = _load_malloc_trim()
+
+
+# Restart once the resident floor leaves too little room for the next
+# analysis's ~170 MB of transient allocation inside the 512 MB cap. Tunable
+# without a redeploy, since the right value depends on the host: raise it if
+# the server recycles after every request, lower it if it is still being
+# OOM-killed.
+_RECYCLE_ABOVE_MB = float(os.environ.get("RECYCLE_ABOVE_MB", "335"))
+
+
+def _rss_mb() -> float | None:
+    """Resident set size in MB, read from /proc. None off Linux."""
+    try:
+        with open("/proc/self/status", encoding="ascii") as status:
+            for line in status:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) / 1024
+    except OSError:
+        return None
+    return None
 
 app = FastAPI(
     title=settings.app_name,
@@ -73,6 +116,19 @@ app.add_middleware(
 app.include_router(analyze_contour.router)
 
 
+@app.on_event("startup")
+async def _log_memory_configuration() -> None:
+    """States the memory setup once at startup, so a deployment's log says
+    plainly whether the reclaim is active rather than leaving it to be
+    inferred from the absence of a warning."""
+    logger.info(
+        "memory guard: malloc_trim=%s, rss_readable=%s, recycle_above=%.0f MB",
+        "yes" if _malloc_trim is not None else "NO",
+        "yes" if _rss_mb() is not None else "NO",
+        _RECYCLE_ABOVE_MB,
+    )
+
+
 @app.middleware("http")
 async def release_memory_after_request(request: Request, call_next):
     """Returns the request's freed heap to the OS before the next one starts.
@@ -84,12 +140,37 @@ async def release_memory_after_request(request: Request, call_next):
     """
     response = await call_next(request)
     if request.url.path == "/analyzeContour":
+        before = _rss_mb()
         gc.collect()
         if _malloc_trim is not None:
             try:
                 _malloc_trim(0)
             except Exception:  # noqa: BLE001 -- reclaiming memory must never fail a served response
                 logger.warning("malloc_trim failed; continuing", exc_info=True)
+        after = _rss_mb()
+        if before is not None and after is not None:
+            # Logged at WARNING so it survives uvicorn's default level: this is
+            # the only visibility into memory on a host where the container is
+            # capped at 512 MB and an overrun is a SIGKILL with no traceback.
+            logger.warning("memory: %.0f MB -> %.0f MB after reclaim (cap 512 MB)", before, after)
+
+        if after is not None and after > _RECYCLE_ABOVE_MB:
+            # An analysis needs roughly 170 MB of transient headroom. Once the
+            # resident floor is high enough that the *next* request would not
+            # fit, restarting now is strictly better than being SIGKILLed
+            # mid-request later: this response has already been produced and
+            # sent, so nothing in flight is lost, whereas an OOM kill during a
+            # request loses that caller's answer entirely.
+            #
+            # The supervising loop restarts the server (see the deployment
+            # command in docs/PHASE1_REPORT.md). SIGTERM rather than os._exit
+            # so uvicorn closes its listening socket and finishes the response.
+            logger.warning(
+                "resident %.0f MB exceeds the %.0f MB recycle threshold; restarting to reclaim",
+                after,
+                _RECYCLE_ABOVE_MB,
+            )
+            os.kill(os.getpid(), signal.SIGTERM)
     return response
 
 

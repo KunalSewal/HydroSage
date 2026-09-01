@@ -46,7 +46,7 @@ async def analyze_contour(contour_map: UploadFile):
         min_elevation=float(elevation.min()),
         max_elevation=float(elevation.max()),
         contours=[
-            {"elevation": line.elevation, "coordinates": [[lon, lat] for lon, lat in line.points]}
+            {"elevation": line.elevation, "coordinates": line.points.tolist()}
             for line in kml_lines
         ],
     )

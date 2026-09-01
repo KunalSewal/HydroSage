@@ -45,11 +45,14 @@ def _as_kmz(kml_bytes: bytes) -> bytes:
 def test_parse_contour_kml_returns_the_original_line_geometry():
     _elevation, _bbox, lines, _valid_mask = parse_contour_kml(_SAMPLE_KML)
 
-    assert lines == [
-        ContourLine(elevation=250.0, points=[(74.60, 19.06), (74.61, 19.06), (74.61, 19.07)]),
-        ContourLine(elevation=260.0, points=[(74.60, 19.08), (74.61, 19.08), (74.61, 19.09)]),
-        ContourLine(elevation=270.0, points=[(74.60, 19.10), (74.61, 19.10), (74.61, 19.11)]),
-    ]
+    # points is an (N, 2) array of [lon, lat] rather than a list of tuples:
+    # for a real survey the tuples cost ~19 MB that stays alive through the
+    # interpolation, which has to fit a 512 MB container (see D-012).
+    assert [line.elevation for line in lines] == [250.0, 260.0, 270.0]
+    assert all(line.points.shape[1] == 2 for line in lines)
+    assert lines[0].points.tolist() == [[74.60, 19.06], [74.61, 19.06], [74.61, 19.07]]
+    assert lines[1].points.tolist() == [[74.60, 19.08], [74.61, 19.08], [74.61, 19.09]]
+    assert lines[2].points.tolist() == [[74.60, 19.10], [74.61, 19.10], [74.61, 19.11]]
 
 
 def test_parse_contour_kml_still_produces_an_interpolated_grid():
