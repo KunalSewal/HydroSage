@@ -96,14 +96,24 @@ def _cell_area_m2(elevation: np.ndarray, bbox: BoundingBox) -> float:
     return (cell_width_deg * meters_per_deg_lon) * (cell_height_deg * METERS_PER_DEGREE_LAT)
 
 
-def _find_depressions(elevation: np.ndarray, margin_rows: int, margin_cols: int) -> np.ndarray:
+def _find_depressions(
+    elevation: np.ndarray, margin_rows: int, margin_cols: int, valid_mask: np.ndarray | None = None
+) -> np.ndarray:
     """True where a cell has no neighbor (of its 8 neighbors) that's
     strictly lower -- a local low point on the RAW, unconditioned
     elevation grid. Must run on this raw grid, not the pit-filled one:
     pysheds' fill_pits/fill_depressions/resolve_flats exist specifically
     to eliminate these for flow routing, so by the time accumulation is
     computed in analyze_catchment, real depressions are already gone
-    from that grid."""
+    from that grid.
+
+    `valid_mask`, when given, restricts depressions to cells where it's
+    True -- used to exclude nearest-neighbor-extrapolated filler (e.g.
+    kml_parser.py's fallback for gaps outside a KML's surveyed convex
+    hull) from ever being treated as a real depression. A large flat
+    interpolation artifact is otherwise indistinguishable from a genuine
+    flat-bottomed basin by elevation values alone, and can be large
+    enough to swallow an entire catchment -- see docs/DECISIONS.md."""
     local_min = ndimage.minimum_filter(elevation, size=3, mode="nearest")
     is_depression = elevation <= local_min
 
@@ -111,6 +121,10 @@ def _find_depressions(elevation: np.ndarray, margin_rows: int, margin_cols: int)
     is_depression[elevation.shape[0] - margin_rows :, :] = False
     is_depression[:, :margin_cols] = False
     is_depression[:, elevation.shape[1] - margin_cols :] = False
+
+    if valid_mask is not None:
+        is_depression &= valid_mask
+
     return is_depression
 
 
@@ -292,7 +306,9 @@ def _flood_fill_achievable_volume(
     return volume_at_depth
 
 
-def analyze_catchment(elevation: np.ndarray, bbox: BoundingBox) -> CatchmentResult:
+def analyze_catchment(
+    elevation: np.ndarray, bbox: BoundingBox, valid_mask: np.ndarray | None = None
+) -> CatchmentResult:
     grid, dem = _build_grid(elevation, bbox)
 
     pit_filled = grid.fill_pits(dem)
@@ -308,12 +324,23 @@ def analyze_catchment(elevation: np.ndarray, bbox: BoundingBox) -> CatchmentResu
     affine = grid.affine
 
     def catchment_for(candidate: _Candidate) -> tuple[np.ndarray, float]:
-        lon, lat = affine * (candidate.col + 0.5, candidate.row + 0.5)
-        mask = np.asarray(grid.catchment(x=lon, y=lat, fdir=fdir, xytype="coordinate", routing="d8"))
+        # Address the outlet by grid index, not by geographic coordinate.
+        # pysheds' coordinate path snaps to a cell *corner* by default
+        # (its `snap='corner'`), so handing it a cell *centre* lands the
+        # trace on a neighbouring cell -- the returned catchment then
+        # belongs to a different cell than the candidate, and frequently
+        # doesn't even contain it. Everything anchored at the candidate
+        # afterwards (the flood-fill's achievable volume, the reported
+        # pond location, the reported flow accumulation) was then
+        # describing a different place than the mask. Indices remove the
+        # round-trip entirely: the trace starts exactly where we mean.
+        mask = np.asarray(
+            grid.catchment(x=candidate.col, y=candidate.row, fdir=fdir, xytype="index", routing="d8")
+        )
         return mask, float(mask.sum() * cell_area_m2)
 
     candidates = _sample_candidates(acc, margin_rows, margin_cols)
-    depression_mask = _find_depressions(elevation, margin_rows, margin_cols)
+    depression_mask = _find_depressions(elevation, margin_rows, margin_cols, valid_mask)
     candidates = [replace(c, is_depression=bool(depression_mask[c.row, c.col])) for c in candidates]
     candidate, catchment_mask, area_m2 = _select_pond_site(candidates, catchment_for)
 

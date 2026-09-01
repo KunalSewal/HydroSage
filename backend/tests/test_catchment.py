@@ -84,6 +84,30 @@ def test_find_depressions_respects_the_margin():
     assert not depressions[0, 0]
 
 
+def test_find_depressions_excludes_cells_outside_a_valid_mask():
+    elevation = np.full((20, 20), 100.0)
+    elevation[5, 5] = 10.0  # a real depression, inside the valid (genuinely-surveyed) region
+    elevation[15, 15] = 10.0  # an identical dip, but outside the valid region -- e.g.
+    # a KML interpolation artifact (nearest-neighbor fill outside the survey's convex hull)
+    valid_mask = np.ones((20, 20), dtype=bool)
+    valid_mask[10:, 10:] = False
+
+    depressions = _find_depressions(elevation, margin_rows=2, margin_cols=2, valid_mask=valid_mask)
+
+    assert depressions[5, 5]
+    assert not depressions[15, 15]
+
+
+def test_find_depressions_no_valid_mask_matches_a_valid_mask_of_none():
+    elevation = np.full((20, 20), 100.0)
+    elevation[10, 10] = 50.0
+
+    without_mask = _find_depressions(elevation, margin_rows=2, margin_cols=2)
+    with_none_mask = _find_depressions(elevation, margin_rows=2, margin_cols=2, valid_mask=None)
+
+    assert np.array_equal(without_mask, with_none_mask)
+
+
 # ---- _flood_fill_achievable_volume: real terrain shape -> achievable storage ----
 
 
@@ -257,3 +281,52 @@ def test_analyze_catchment_still_returns_a_boundary_and_positive_area():
     assert result.catchment_area_m2 > 0
     assert result.catchment_cell_count > 0
     assert len(result.catchment_boundary) >= 4
+
+
+def _radial_basin(size: int = 120) -> np.ndarray:
+    """Elevation rising with distance from the centre -- a literal bowl, so
+    water collects at the middle. Terrain that unambiguously can hold a
+    pond, which makes it a clean test of whether the analysis finds one."""
+    y, x = np.mgrid[0:size, 0:size]
+    centre = size / 2
+    return np.sqrt((x - centre) ** 2 + (y - centre) ** 2).astype(np.float64)
+
+
+def test_analyze_catchment_pond_site_lies_inside_its_own_catchment():
+    # The recommended pond has to sit inside the catchment drawn for it --
+    # otherwise the site and the boundary describe different places, and
+    # anything computed at the site against that mask (the flood-fill's
+    # achievable volume) is meaningless.
+    from shapely.geometry import Point, Polygon
+
+    result = analyze_catchment(_radial_basin(), _bbox_km(3.0))
+
+    boundary = Polygon(result.catchment_boundary)
+    site = Point(result.pond_lon, result.pond_lat)
+    assert boundary.contains(site) or boundary.touches(site)
+
+
+def test_analyze_catchment_finds_real_storage_in_a_basin():
+    # A bowl-shaped basin can obviously hold water; reporting zero
+    # achievable volume at every depth means the flood-fill never found the
+    # site inside its own catchment.
+    result = analyze_catchment(_radial_basin(), _bbox_km(3.0))
+
+    assert any(volume > 0 for volume in result.achievable_volume_m3_by_depth.values())
+
+
+def test_analyze_catchment_no_valid_mask_matches_an_all_true_valid_mask():
+    # valid_mask=None (the default) must behave identically to a valid_mask
+    # that excludes nothing -- proves the new parameter is a genuine no-op
+    # when every cell is real, surveyed terrain.
+    size = 200
+    y, x = np.mgrid[0:size, 0:size]
+    elevation = (x + y).astype(np.float64)
+    bbox = _bbox_km(6.0)
+
+    result_default = analyze_catchment(elevation, bbox)
+    result_all_true = analyze_catchment(elevation, bbox, valid_mask=np.ones_like(elevation, dtype=bool))
+
+    assert result_default.pond_lat == result_all_true.pond_lat
+    assert result_default.pond_lon == result_all_true.pond_lon
+    assert result_default.catchment_area_m2 == result_all_true.catchment_area_m2
