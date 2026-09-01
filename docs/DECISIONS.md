@@ -157,3 +157,18 @@ Status: Accepted
 **Why it went unnoticed until now:** before D-007, pond dimensions were computed purely from runoff volume and never consulted the catchment mask at the site, so the inconsistency produced no visible symptom. D-007's terrain-driven sizing made the mask load-bearing, which turned a silent inconsistency into a visible zero.
 
 **Impact:** One call in `domain/catchment.py`. Catchment areas shift slightly (the real KML: 25.8 ha → 26.2 ha; the click-map site: 46.8 ha → 48.7 ha) — these are corrections, not regressions. Two regression tests added, both asserting invariants that were genuinely violated: the pond site must lie inside its own catchment boundary, and a bowl-shaped basin must report non-zero achievable storage.
+
+---
+
+## D-010: Target farm-pond scale, and bound pond volume by terrain *and* runoff
+
+Date: 2026-09-01
+Status: Accepted
+
+**Context:** With D-009's site/catchment consistency bug fixed, the numbers became honestly computed but still implausible as a farm pond: the real sample KMZ produced 141m / 177m / 250m square ponds at 2/3/4m depth for a 26.17 ha catchment. Two measurements reframed the problem. First, bounding by runoff alone barely helps — `min(terrain, runoff)` on that site gives 141m / 176m / 152m, improving only the 4m option, because a 26 ha catchment genuinely delivers ~92,500 m³/yr. Second, `MIN/MAX_CATCHMENT_AREA_M2` was 1–50 ha, a range spanning two interventions that Indian watershed practice treats separately: a farm pond (a dug excavation serving a few hectares) and a check dam or percolation tank (a bund across a drainage line serving tens of hectares). At 26 ha the analysis was faithfully returning a check-dam-scale structure and calling it a pond.
+
+**Decision:** Two changes. `MAX_CATCHMENT_AREA_M2` drops from 500,000 (50 ha) to 50,000 (5 ha), so site selection targets farm-pond scale; `MIN_CATCHMENT_AREA_M2` stays at 10,000 (1 ha). And `domain/pond.py`'s primary sizing function, renamed from `size_pond_from_terrain_capacity` to `size_pond_options`, now takes the annual runoff volume and sizes each depth to `min(terrain capacity, annual runoff)` rather than terrain alone.
+
+**Rationale:** Both bounds are measured physical quantities — one from the flood-fill over the actual landform, one from rainfall × catchment area × runoff coefficient. A practical-excavation cap was considered and rejected: it would be an arbitrary constant doing the real work, and a clamped number stops being physically derived, which cuts against this project's standing priority of physical correctness over convenience. Fixing the scale at site selection addresses the cause rather than clamping the symptom. Verified before committing that neither input path loses its candidate pool under the narrower band: the real sample KML has 86 in-range candidates (22 of them depressions), the live DEM at Bhilai/Durg has 172 (27 depressions), and all three synthetic terrains in the test suite stay in range.
+
+**Impact:** On the real sample KMZ, the selected site becomes a 4.35 ha catchment delivering 15,401 m³/yr, and the recommendations become 62.9m / 71.6m / 62.1m squares (terrain-limited at 2m capturing 51%; runoff-limited at 3m and 4m capturing 100%). `runoff_capture_ratio` is now bounded to at most 1.0 by construction and identifies the binding bound: exactly 1.0 is runoff-limited, below 1.0 is terrain-limited — so no separate field was added for that. The API response shape is unchanged. **Accepted consequence:** the app no longer recommends check-dam or percolation-tank scale structures; for a catchment larger than 5 ha it will prefer a smaller sub-catchment within the analysed area. This should be stated in the written report.
