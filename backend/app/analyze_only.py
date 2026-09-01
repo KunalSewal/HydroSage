@@ -45,17 +45,38 @@ def _load_malloc_trim():
     Absent on Windows and macOS, where this is a no-op and the caller simply
     relies on gc.
     """
-    try:
-        libc_name = ctypes.util.find_library("c")
-        if libc_name is None:
-            return None
-        libc = ctypes.CDLL(libc_name)
-        return libc.malloc_trim
-    except (OSError, AttributeError):
-        return None
+    # find_library("c") shells out to ldconfig/gcc and returns None on a slim
+    # container that has neither -- which is exactly where this matters most,
+    # so the well-known soname is tried directly as well.
+    candidates = [ctypes.util.find_library("c"), "libc.so.6", "libc.so"]
+    for name in candidates:
+        if name is None:
+            continue
+        try:
+            trim = ctypes.CDLL(name).malloc_trim
+        except (OSError, AttributeError):
+            continue
+        trim.argtypes = [ctypes.c_size_t]
+        trim.restype = ctypes.c_int
+        logger.info("malloc_trim resolved via %s", name)
+        return trim
+    logger.warning("malloc_trim unavailable; freed heap will not be returned to the OS")
+    return None
 
 
 _malloc_trim = _load_malloc_trim()
+
+
+def _rss_mb() -> float | None:
+    """Resident set size in MB, read from /proc. None off Linux."""
+    try:
+        with open("/proc/self/status", encoding="ascii") as status:
+            for line in status:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) / 1024
+    except OSError:
+        return None
+    return None
 
 app = FastAPI(
     title=settings.app_name,
@@ -84,12 +105,19 @@ async def release_memory_after_request(request: Request, call_next):
     """
     response = await call_next(request)
     if request.url.path == "/analyzeContour":
+        before = _rss_mb()
         gc.collect()
         if _malloc_trim is not None:
             try:
                 _malloc_trim(0)
             except Exception:  # noqa: BLE001 -- reclaiming memory must never fail a served response
                 logger.warning("malloc_trim failed; continuing", exc_info=True)
+        after = _rss_mb()
+        if before is not None and after is not None:
+            # Logged at WARNING so it survives uvicorn's default level: this is
+            # the only visibility into memory on a host where the container is
+            # capped at 512 MB and an overrun is a SIGKILL with no traceback.
+            logger.warning("memory: %.0f MB -> %.0f MB after reclaim (cap 512 MB)", before, after)
     return response
 
 
