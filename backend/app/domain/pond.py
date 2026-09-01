@@ -1,14 +1,18 @@
 """Two pond-sizing models, per PROJECT_BRIEF.md core use case #7.
 
-`size_pond_from_terrain_capacity` is the app's primary sizing path (see
-services/recommendation.py): each candidate depth's storage volume comes
-from that depth's own real terrain-holding capacity (domain/catchment.py's
-flood-fill), not an aspirational target -- see docs/DECISIONS.md D-007 for
-why. `recommend_pond_dimensions` is the earlier, demand-driven model
-(storage targeted to equal one year's estimated catchment runoff, back-
-solved into a footprint at a small set of practical depths); it's kept as
-an available utility for a target-volume use case, but is no longer how
-the app's own recommendation is sized.
+`size_pond_options` is the app's primary sizing path (see
+services/recommendation.py): each candidate depth's storage volume is bound
+to the smaller of two real physical constraints: what the terrain can hold
+at that depth (domain/catchment.py's flood-fill) and what the catchment
+actually delivers in a year (domain/runoff.py). Sizing to terrain alone
+overshoots when the basin is larger than the water available to fill it;
+sizing to runoff alone overshoots when the landform cannot hold that much.
+The binding bound is whichever is smaller, and it varies by depth -- see
+docs/DECISIONS.md D-010 for why. `recommend_pond_dimensions` is the
+earlier, demand-driven model (storage targeted to equal one year's estimated
+catchment runoff, back-solved into a footprint at a small set of practical
+depths); it's kept as an available utility for a target-volume use case,
+but is no longer how the app's own recommendation is sized.
 
 Assumes a simple flat-bottomed, square footprint (no side-slope/
 trapezoidal correction) -- a documented simplification, not an excavation
