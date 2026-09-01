@@ -64,28 +64,42 @@ def compute_recommendation_fields(
     rainfall_client = RainfallClient()
     try:
         daily = rainfall_client.get_daily_rainfall(lat, lon, start, end)
+    except Exception:  # noqa: BLE001 -- see _get_rainfall_summary's reasoning below
+        logger.warning("rainfall lookup failed; reporting terrain capacity without a runoff bound", exc_info=True)
+        rainfall = None
+    else:
+        rainfall = summarize_rainfall(daily)
     finally:
         rainfall_client.close()
-    rainfall = summarize_rainfall(daily)
 
-    runoff = estimate_annual_runoff_volume(
-        average_annual_rainfall_mm=rainfall.average_annual_mm,
-        catchment_area_m2=catchment_area_m2,
+    # A rainfall outage must not fail the request. The catchment analysis is
+    # derived entirely from the uploaded survey and stays valid without it;
+    # only the runoff bound and the rainfall figures are lost. Sizing then
+    # falls back to terrain capacity alone. See docs/DECISIONS.md D-011.
+    runoff = (
+        estimate_annual_runoff_volume(
+            average_annual_rainfall_mm=rainfall.average_annual_mm,
+            catchment_area_m2=catchment_area_m2,
+        )
+        if rainfall is not None
+        else None
     )
-    pond_options = size_pond_options(achievable_volume_m3_by_depth, runoff.runoff_volume_m3)
+    runoff_volume_m3 = runoff.runoff_volume_m3 if runoff is not None else None
+
+    pond_options = size_pond_options(achievable_volume_m3_by_depth, runoff_volume_m3)
     available_land_m2 = _get_available_land_hectares(bbox)
 
     return RecommendationFieldsOut(
-        average_annual_rainfall_mm=rainfall.average_annual_mm,
-        runoff_volume_m3=runoff.runoff_volume_m3,
-        runoff_coefficient=runoff.runoff_coefficient,
+        average_annual_rainfall_mm=rainfall.average_annual_mm if rainfall is not None else None,
+        runoff_volume_m3=runoff_volume_m3,
+        runoff_coefficient=runoff.runoff_coefficient if runoff is not None else None,
         pond_options=[
             PondOptionOut(
                 depth_m=o.depth_m,
                 surface_area_m2=o.surface_area_m2,
                 side_length_m=o.side_length_m,
                 fits_available_land=(o.surface_area_m2 <= available_land_m2) if available_land_m2 is not None else None,
-                runoff_capture_ratio=capture_ratio(o, runoff.runoff_volume_m3),
+                runoff_capture_ratio=capture_ratio(o, runoff_volume_m3),
             )
             for o in pond_options
         ],

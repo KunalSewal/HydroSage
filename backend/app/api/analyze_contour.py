@@ -9,11 +9,14 @@ router = APIRouter(tags=["analyze-contour"])
 
 
 @router.post("/analyzeContour", response_model=CatchmentAnalysisOut)
-async def analyze_contour(file: UploadFile):
-    if not file.filename or not file.filename.lower().endswith((".kml", ".kmz")):
+async def analyze_contour(contour_map: UploadFile):
+    # The parameter name IS the multipart form field name FastAPI expects,
+    # and "contour_map" is fixed by the submission spec -- renaming this
+    # parameter silently changes the public API contract.
+    if not contour_map.filename or not contour_map.filename.lower().endswith((".kml", ".kmz")):
         raise HTTPException(status_code=422, detail="expected a .kml or .kmz file")
 
-    kml_bytes = await file.read()
+    kml_bytes = await contour_map.read()
 
     try:
         elevation, bbox, kml_lines, valid_mask = parse_contour_kml(kml_bytes)

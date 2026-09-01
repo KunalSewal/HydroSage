@@ -31,6 +31,15 @@ class Settings(BaseSettings):
 
     overpass_base_url: str = "https://overpass-api.de"
 
+    # Both of these enrich a recommendation but neither is required for the
+    # catchment analysis, which is computed entirely from the uploaded
+    # survey. On a network that blocks outbound HTTPS, a generous timeout is
+    # spent purely waiting before degrading anyway (see D-011), so a
+    # deployment behind a firewall should turn these well down to keep the
+    # endpoint's response time reasonable.
+    rainfall_timeout_seconds: float = 30.0
+    land_use_timeout_seconds: float = 10.0
+
     # Comma-separated -- e.g. "https://hydrosage.example.com,http://localhost:5173".
     # Defaults cover local dev only; a real deployment must set this to the
     # frontend's actual public URL or the browser will silently block every

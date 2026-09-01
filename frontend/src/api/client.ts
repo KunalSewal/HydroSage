@@ -58,9 +58,12 @@ export interface PondOption {
 // flows that compute it (the click-map /recommend endpoint and the
 // KML-upload /analyzeContour endpoint), same reasoning as CatchmentFields.
 export interface RecommendationFields {
-  average_annual_rainfall_mm: number
-  runoff_volume_m3: number
-  runoff_coefficient: number
+  // Null together when the rainfall service was unreachable. The catchment
+  // analysis is computed from the survey alone and stays valid; only these
+  // runoff-derived figures are lost. See backend docs/DECISIONS.md D-011.
+  average_annual_rainfall_mm: number | null
+  runoff_volume_m3: number | null
+  runoff_coefficient: number | null
   pond_options: PondOption[]
   available_land_hectares: number | null
 }
@@ -140,7 +143,8 @@ export async function searchPlaces(query: string): Promise<GeocodeResult[]> {
 
 export async function analyzeContourFile(file: File): Promise<CatchmentAnalysis> {
   const formData = new FormData()
-  formData.append('file', file)
+  // Field name fixed by the API contract (see backend analyze_contour.py).
+  formData.append('contour_map', file)
   const response = await fetch(`${API_BASE}/analyzeContour`, { method: 'POST', body: formData })
   return parseOrThrow<CatchmentAnalysis>(response)
 }

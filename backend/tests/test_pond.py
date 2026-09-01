@@ -122,3 +122,21 @@ def test_size_pond_options_records_the_bounded_volume_on_each_option():
 
     assert by_depth[2.0].volume_m3 == pytest.approx(6000.0)    # terrain-limited
     assert by_depth[4.0].volume_m3 == pytest.approx(40_000.0)  # runoff-limited
+
+
+# The rainfall API is a third-party service that can be rate-limited or
+# firewalled off entirely. Catchment analysis doesn't depend on it, so a
+# rainfall outage must degrade the runoff bound rather than fail the
+# request -- see docs/DECISIONS.md D-011.
+def test_size_pond_options_falls_back_to_terrain_capacity_when_runoff_is_unknown():
+    options = size_pond_options({2.0: 8000.0, 3.0: 21_000.0}, annual_runoff_m3=None)
+    by_depth = {o.depth_m: o for o in options}
+
+    assert by_depth[2.0].volume_m3 == pytest.approx(8000.0)
+    assert by_depth[3.0].volume_m3 == pytest.approx(21_000.0)
+    assert by_depth[2.0].surface_area_m2 == pytest.approx(4000.0)
+
+
+def test_capture_ratio_is_none_when_runoff_is_unknown():
+    option = size_pond_options({2.0: 4000.0}, annual_runoff_m3=None)[0]
+    assert capture_ratio(option, None) is None

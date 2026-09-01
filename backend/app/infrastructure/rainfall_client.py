@@ -21,7 +21,9 @@ class DailyRainfall:
 class RainfallClient:
     def __init__(self, client: httpx.Client | None = None) -> None:
         settings = get_settings()
-        self._client = client or httpx.Client(base_url=settings.open_meteo_base_url, timeout=30.0)
+        self._client = client or httpx.Client(
+            base_url=settings.open_meteo_base_url, timeout=settings.rainfall_timeout_seconds
+        )
 
     def get_daily_rainfall(self, lat: float, lon: float, start: date, end: date) -> list[DailyRainfall]:
         response = self._client.get(

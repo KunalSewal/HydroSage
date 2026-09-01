@@ -50,7 +50,7 @@ class LandUseClient:
         # shouldn't make the whole recommendation wait 30s+ to degrade.
         self._client = client or httpx.Client(
             base_url=settings.overpass_base_url,
-            timeout=10.0,
+            timeout=settings.land_use_timeout_seconds,
             headers={"User-Agent": settings.nominatim_user_agent},
         )
 

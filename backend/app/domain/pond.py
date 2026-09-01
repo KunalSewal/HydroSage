@@ -75,7 +75,7 @@ def recommend_pond_dimensions(
 
 def size_pond_options(
     achievable_volume_m3_by_depth: dict[float, float],
-    annual_runoff_m3: float,
+    annual_runoff_m3: float | None,
 ) -> list[PondOption]:
     """Back-solves a flat square footprint at each candidate depth from the
     smaller of two real physical bounds:
@@ -104,10 +104,16 @@ def size_pond_options(
     volume_m3 on each returned option carries this same bounded volume
     directly, so callers don't need to reconstruct it (lossily) from
     surface_area_m2 * depth_m.
+
+    annual_runoff_m3 of None means the runoff bound is *unknown*, not zero:
+    the rainfall service was unreachable. Sizing then falls back to the
+    terrain bound alone (the D-007 behaviour), which is the honest answer
+    -- the landform's capacity is measured from the uploaded survey and
+    doesn't depend on any external service. See docs/DECISIONS.md D-011.
     """
     options = []
     for depth, terrain_capacity_m3 in sorted(achievable_volume_m3_by_depth.items()):
-        volume_m3 = min(terrain_capacity_m3, annual_runoff_m3)
+        volume_m3 = terrain_capacity_m3 if annual_runoff_m3 is None else min(terrain_capacity_m3, annual_runoff_m3)
         area = volume_m3 / depth
         options.append(
             PondOption(
@@ -120,15 +126,17 @@ def size_pond_options(
     return options
 
 
-def capture_ratio(option: PondOption, annual_runoff_m3: float) -> float | None:
+def capture_ratio(option: PondOption, annual_runoff_m3: float | None) -> float | None:
     """What share of a typical year's catchment runoff this option holds.
 
-    Returns None when there is no runoff to compare against, rather than
-    dividing by zero. Reads the option's own recorded volume rather than
+    Returns None when there is no runoff to compare against (zero) or no
+    runoff figure at all (None -- the rainfall service was unreachable),
+    rather than dividing by zero or by nothing. Reads the option's own
+    recorded volume rather than
     reconstructing it from area x depth -- that round-trip is lossy enough
     to return values a hair above 1.0, which would break the documented
     guarantee that a ratio of exactly 1.0 means runoff-limited.
     """
-    if annual_runoff_m3 <= 0:
+    if annual_runoff_m3 is None or annual_runoff_m3 <= 0:
         return None
     return option.volume_m3 / annual_runoff_m3

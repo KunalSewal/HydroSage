@@ -101,7 +101,7 @@ describe('api client', () => {
     expect(url).toContain('/analyzeContour')
     expect(options.method).toBe('POST')
     expect(options.body).toBeInstanceOf(FormData)
-    expect(options.body.get('file')).toBe(file)
+    expect(options.body.get('contour_map')).toBe(file)
   })
 
   it('analyzeContourFile throws a readable error on a non-OK response', async () => {

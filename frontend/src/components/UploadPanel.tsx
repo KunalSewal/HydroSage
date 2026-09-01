@@ -53,8 +53,14 @@ export default function UploadPanel({ state, onRetry }: UploadPanelProps) {
             <div className="flex items-center gap-2">
               <CloudRain className="h-4 w-4 text-hs-teal" />
               <span>
-                {Math.round(state.result.average_annual_rainfall_mm)}mm/yr avg rainfall &rarr;{' '}
-                {Math.round(state.result.runoff_volume_m3).toLocaleString()} m&sup3; runoff/yr
+                {state.result.average_annual_rainfall_mm === null || state.result.runoff_volume_m3 === null ? (
+                  <span className="text-hs-muted">Rainfall data unavailable &mdash; sizing by terrain capacity only</span>
+                ) : (
+                  <>
+                    {Math.round(state.result.average_annual_rainfall_mm)}mm/yr avg rainfall &rarr;{' '}
+                    {Math.round(state.result.runoff_volume_m3).toLocaleString()} m&sup3; runoff/yr
+                  </>
+                )}
               </span>
             </div>
             <div className="flex items-start gap-2">

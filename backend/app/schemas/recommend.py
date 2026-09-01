@@ -25,9 +25,15 @@ class RecommendationFieldsOut(BaseModel):
     and the KML-upload /analyzeContour endpoint) so they return the same
     shape instead of two near-identical schemas."""
 
-    average_annual_rainfall_mm: float
-    runoff_volume_m3: float
-    runoff_coefficient: float
+    # All three are None together when the rainfall service is unreachable
+    # (rate-limited or firewalled). Catchment analysis is computed entirely
+    # from the uploaded survey and stays valid regardless, so an outage
+    # degrades these fields instead of failing the request -- see
+    # docs/DECISIONS.md D-011. pond_options are still returned, sized by
+    # terrain capacity alone, with runoff_capture_ratio None.
+    average_annual_rainfall_mm: float | None
+    runoff_volume_m3: float | None
+    runoff_coefficient: float | None
     pond_options: list[PondOptionOut]
     available_land_hectares: float | None
 
