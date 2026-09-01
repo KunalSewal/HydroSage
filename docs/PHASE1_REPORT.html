@@ -1,0 +1,723 @@
+<title>HydroSage Catchment API</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<style>
+  /* ---- Light palette (complete, on bare :root) ---- */
+  :root {
+    --paper:      #fdf6ec;
+    --surface:    #ffffff;
+    --raised:     #f6ede0;
+    --ink:        #0a231d;
+    --ink-soft:   #34534a;
+    --muted:      #6d8880;
+    --rule:       #ddd0bd;
+    --accent:     #a9751a;
+    --accent-ink: #0a231d;
+    --teal:       #1d7a6c;
+    --code-bg:    #0f2b24;
+    --code-ink:   #e8ecdf;
+    --code-key:   #f5c26b;
+    --code-num:   #8fd6c8;
+
+    --measure: 68ch;
+    --step--1: clamp(0.78rem, 0.76rem + 0.1vw, 0.84rem);
+    --step-0:  clamp(1rem, 0.97rem + 0.15vw, 1.08rem);
+    --step-1:  clamp(1.2rem, 1.13rem + 0.35vw, 1.4rem);
+    --step-2:  clamp(1.45rem, 1.3rem + 0.7vw, 1.85rem);
+    --step-3:  clamp(1.9rem, 1.6rem + 1.4vw, 2.9rem);
+  }
+
+  /* ---- Dark, for the un-stamped (system) state ---- */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:      #081b16;
+      --surface:    #0f2b24;
+      --raised:     #143830;
+      --ink:        #f1ece1;
+      --ink-soft:   #c3d6cf;
+      --muted:      #8fa8a0;
+      --rule:       #24483e;
+      --accent:     #f5c26b;
+      --accent-ink: #0a231d;
+      --teal:       #5fc9ba;
+      --code-bg:    #061511;
+      --code-ink:   #e8ecdf;
+      --code-key:   #f5c26b;
+      --code-num:   #8fd6c8;
+    }
+  }
+
+  /* ---- Dark, explicitly chosen ---- */
+  :root[data-theme="dark"] {
+    --paper:      #081b16;
+    --surface:    #0f2b24;
+    --raised:     #143830;
+    --ink:        #f1ece1;
+    --ink-soft:   #c3d6cf;
+    --muted:      #8fa8a0;
+    --rule:       #24483e;
+    --accent:     #f5c26b;
+    --accent-ink: #0a231d;
+    --teal:       #5fc9ba;
+    --code-bg:    #061511;
+    --code-ink:   #e8ecdf;
+    --code-key:   #f5c26b;
+    --code-num:   #8fd6c8;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Inter", system-ui, -apple-system, sans-serif;
+    font-size: var(--step-0);
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .shell {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0;
+    max-width: 78rem;
+    margin: 0 auto;
+    padding: 0 1.5rem 6rem;
+  }
+
+  @media (min-width: 62rem) {
+    .shell { grid-template-columns: 14rem minmax(0, 1fr); gap: 3.5rem; padding-right: 3rem; }
+  }
+
+  /* ---------- Masthead ---------- */
+  .masthead {
+    grid-column: 1 / -1;
+    padding: 4rem 0 2.5rem;
+    border-bottom: 2px solid var(--ink);
+  }
+  .eyebrow {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: var(--step--1);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 1.25rem;
+  }
+  .masthead h1 {
+    font-family: "Fraunces", Georgia, serif;
+    font-weight: 600;
+    font-size: var(--step-3);
+    line-height: 1.05;
+    text-wrap: balance;
+    margin: 0 0 0.75rem;
+    letter-spacing: -0.015em;
+  }
+  .standfirst {
+    font-size: var(--step-1);
+    color: var(--ink-soft);
+    max-width: 46ch;
+    margin: 0 0 2rem;
+    text-wrap: pretty;
+  }
+  .byline {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 2rem;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: var(--step--1);
+    color: var(--ink-soft);
+  }
+  .byline b { color: var(--ink); font-weight: 600; }
+
+  /* ---------- Section rail ---------- */
+  .rail { display: none; }
+  @media (min-width: 62rem) {
+    .rail {
+      display: block;
+      position: sticky;
+      top: 0;
+      align-self: start;
+      padding-top: 3rem;
+      max-height: 100vh;
+      overflow-y: auto;
+    }
+    .rail ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.55rem; }
+    .rail a {
+      font-family: "IBM Plex Mono", ui-monospace, monospace;
+      font-size: var(--step--1);
+      color: var(--muted);
+      text-decoration: none;
+      display: block;
+      padding: 0.15rem 0;
+      border-left: 2px solid transparent;
+      padding-left: 0.85rem;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .rail a:hover, .rail a:focus-visible { color: var(--ink); border-left-color: var(--accent); }
+  }
+
+  main { min-width: 0; padding-top: 3rem; }
+
+  section { margin-bottom: 4.5rem; scroll-margin-top: 2rem; }
+
+  h2 {
+    font-family: "Fraunces", Georgia, serif;
+    font-weight: 600;
+    font-size: var(--step-2);
+    line-height: 1.15;
+    text-wrap: balance;
+    margin: 0 0 0.4rem;
+    letter-spacing: -0.01em;
+  }
+  h3 {
+    font-family: "Inter", system-ui, sans-serif;
+    font-weight: 600;
+    font-size: var(--step-1);
+    margin: 2.5rem 0 0.6rem;
+    text-wrap: balance;
+  }
+  .section-note {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: var(--step--1);
+    color: var(--muted);
+    margin: 0 0 1.75rem;
+  }
+  p, ul, ol { max-width: var(--measure); }
+  p { margin: 0 0 1.1rem; text-wrap: pretty; }
+  ul, ol { margin: 0 0 1.1rem; padding-left: 1.2rem; }
+  li { margin-bottom: 0.5rem; }
+  a { color: var(--teal); }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  strong { font-weight: 600; }
+  code {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 0.88em;
+    background: var(--raised);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    padding: 0.08em 0.34em;
+  }
+
+  /* ---------- Submission facts card ---------- */
+  .facts {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-top: 3px solid var(--accent);
+    padding: 1.75rem;
+    margin: 0 0 3rem;
+    display: grid;
+    gap: 1.25rem;
+  }
+  @media (min-width: 44rem) { .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .fact { min-width: 0; }
+  .fact dt {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: var(--step--1);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 0.35rem;
+  }
+  .fact dd {
+    margin: 0;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 0.95rem;
+    word-break: break-all;
+  }
+  .fact dd a { color: var(--teal); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+
+  /* ---------- Pipeline (a genuine ordered sequence) ---------- */
+  .pipeline { list-style: none; padding: 0; margin: 2rem 0; max-width: none; counter-reset: stage; }
+  .stage {
+    display: grid;
+    grid-template-columns: 2.6rem minmax(0, 1fr);
+    gap: 1.1rem;
+    padding-bottom: 1.6rem;
+    position: relative;
+    margin: 0;
+  }
+  .stage:not(:last-child)::before {
+    content: "";
+    position: absolute;
+    left: 1.29rem;
+    top: 2.6rem;
+    bottom: 0;
+    width: 1px;
+    background: var(--rule);
+  }
+  .stage-num {
+    counter-increment: stage;
+    width: 2.6rem; height: 2.6rem;
+    border: 1px solid var(--rule);
+    border-radius: 50%;
+    background: var(--surface);
+    display: grid; place-items: center;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 0.85rem;
+    color: var(--accent);
+    font-weight: 600;
+    position: relative; z-index: 1;
+  }
+  .stage-num::before { content: counter(stage, decimal-leading-zero); }
+  .stage-body { padding-top: 0.35rem; min-width: 0; }
+  .stage-body h4 {
+    margin: 0 0 0.3rem;
+    font-size: 1rem;
+    font-weight: 600;
+    font-family: "Inter", system-ui, sans-serif;
+  }
+  .stage-body p { margin: 0 0 0.4rem; color: var(--ink-soft); max-width: 62ch; }
+  .stage-meta {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: var(--step--1);
+    color: var(--muted);
+  }
+
+  /* ---------- Tables ---------- */
+  .table-wrap { overflow-x: auto; margin: 1.5rem 0 2rem; border: 1px solid var(--rule); background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 0.92rem; min-width: 34rem; }
+  th, td { text-align: left; padding: 0.7rem 1rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  thead th {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: var(--step--1);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 500;
+    background: var(--raised);
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.mono, .num { font-family: "IBM Plex Mono", ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+  td.mono { color: var(--ink); white-space: nowrap; }
+
+  /* ---------- Code ---------- */
+  pre {
+    background: var(--code-bg);
+    color: var(--code-ink);
+    padding: 1.1rem 1.25rem;
+    overflow-x: auto;
+    margin: 1.25rem 0 1.75rem;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    line-height: 1.6;
+    border: 1px solid var(--rule);
+  }
+  pre code { background: none; border: none; padding: 0; font-size: inherit; color: inherit; }
+  .k { color: var(--code-key); }
+  .n { color: var(--code-num); }
+  .c { color: #7f9c92; }
+
+  /* ---------- Callout ---------- */
+  .callout {
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--teal);
+    background: var(--surface);
+    padding: 1.1rem 1.35rem;
+    margin: 1.75rem 0;
+    max-width: var(--measure);
+  }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout .label {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: var(--step--1);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--teal);
+    display: block;
+    margin-bottom: 0.4rem;
+  }
+  .callout.warn { border-left-color: var(--accent); }
+  .callout.warn .label { color: var(--accent); }
+
+  /* ---------- Metric strip ---------- */
+  .metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+    gap: 1px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+    margin: 1.75rem 0 2rem;
+  }
+  .metric { background: var(--surface); padding: 1.1rem; }
+  .metric .v {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 1.35rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink);
+    display: block;
+    line-height: 1.2;
+  }
+  .metric .l {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: var(--step--1);
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    margin-top: 0.3rem;
+    display: block;
+  }
+
+  .pill {
+    display: inline-block;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 0.18em 0.5em;
+    border-radius: 2px;
+    border: 1px solid var(--rule);
+    color: var(--ink-soft);
+    background: var(--raised);
+    white-space: nowrap;
+  }
+  .pill.req { border-color: var(--accent); color: var(--accent); background: transparent; }
+
+  footer {
+    grid-column: 1 / -1;
+    border-top: 1px solid var(--rule);
+    padding-top: 1.5rem;
+    color: var(--muted);
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: var(--step--1);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+  }
+  html { scroll-behavior: smooth; }
+
+  /* ---------- Print / PDF ----------
+     Forces the light palette regardless of the viewer's theme, drops the
+     navigation rail, and keeps related blocks from splitting across pages. */
+  @media print {
+    :root, :root[data-theme="dark"], :root:not([data-theme="light"]) {
+      --paper: #ffffff;
+      --surface: #ffffff;
+      --raised: #f4f0e8;
+      --ink: #10241e;
+      --ink-soft: #33453f;
+      --muted: #5f7169;
+      --rule: #c9c2b4;
+      --accent: #8a5f14;
+      --teal: #14685c;
+      --code-bg: #f6f3ec;
+      --code-ink: #16241f;
+      --code-key: #7a4e08;
+      --code-num: #10554a;
+    }
+    @page { margin: 16mm 14mm; }
+    body { font-size: 10.5pt; line-height: 1.5; }
+    .shell { display: block; max-width: none; padding: 0; }
+    .rail { display: none !important; }
+    main { padding-top: 0; }
+    .masthead { padding: 0 0 1.2rem; }
+    section { margin-bottom: 2rem; }
+    pre { border: 1px solid var(--rule); font-size: 8.5pt; white-space: pre-wrap; word-break: break-word; }
+    .c { color: #6b7d75; }
+    /* Keep meaning-bearing blocks intact across page breaks */
+    .stage, .callout, .metric, tr, .fact { break-inside: avoid; }
+    h2, h3 { break-after: avoid; }
+    .table-wrap { overflow: visible; border: none; }
+    table { min-width: 0; }
+    .metrics { break-inside: avoid; }
+    /* Spell out the two links a grader actually needs to type */
+    .fact dd a::after { content: " (" attr(href) ")"; font-size: 0.85em; color: var(--muted); word-break: break-all; }
+    a { text-decoration: none; }
+  }
+</style>
+
+<div class="shell">
+
+  <header class="masthead">
+    <p class="eyebrow">Phase 1 Submission &middot; Contour Map Catchment Analysis</p>
+    <h1>Estimating pond catchments from a contour map</h1>
+    <p class="standfirst">A backend API that reads a KML/KMZ contour survey, routes water across the terrain it describes, and returns a sited pond with its measured catchment.</p>
+    <div class="byline">
+      <span><b>Kunal Sewal</b> &middot; 12341270</span>
+      <span>HydroSage</span>
+    </div>
+  </header>
+
+  <nav class="rail" aria-label="Sections">
+    <ol>
+      <li><a href="#submission">Submission details</a></li>
+      <li><a href="#approach">Catchment approach</a></li>
+      <li><a href="#demo">Demonstration</a></li>
+      <li><a href="#api">API documentation</a></li>
+      <li><a href="#extensibility">Extensibility</a></li>
+      <li><a href="#limits">Limitations</a></li>
+    </ol>
+  </nav>
+
+  <main>
+
+    <section id="submission">
+      <h2>Submission details</h2>
+      <p class="section-note">Everything needed to test the endpoint</p>
+
+      <dl class="facts">
+        <div class="fact">
+          <dt>Repository</dt>
+          <dd><a href="https://github.com/KunalSewal/HydroSage">github.com/KunalSewal/HydroSage</a></dd>
+        </div>
+        <div class="fact">
+          <dt>API endpoint</dt>
+          <dd>POST http://10.1.75.53:3265/analyzeContour</dd>
+        </div>
+        <div class="fact">
+          <dt>Form field name</dt>
+          <dd>contour_map <span class="pill req">required</span></dd>
+        </div>
+        <div class="fact">
+          <dt>Accepted formats</dt>
+          <dd>.kml &middot; .kmz</dd>
+        </div>
+      </dl>
+
+      <p>The endpoint accepts a single <code>multipart/form-data</code> upload under the field name <code>contour_map</code> and responds with JSON. It requires no authentication, and works from any API client:</p>
+
+<pre><code>curl -X POST http://10.1.75.53:3265/analyzeContour \
+  -F <span class="k">"contour_map=@contours_1m.kml"</span></code></pre>
+
+      <div class="callout warn">
+        <span class="label">Expected response time</span>
+        <p>A full analysis of the 6.7&nbsp;MB sample map takes roughly <strong>20&ndash;60 seconds</strong>: the file carries 1,355 contour lines that are interpolated onto a 90,000-cell grid before flow routing runs. This is normal, not a hang. Allow a generous client timeout.</p>
+      </div>
+    </section>
+
+    <section id="approach">
+      <h2>How the catchment is estimated</h2>
+      <p class="section-note">From contour lines to a delineated drainage area</p>
+
+      <p>A contour map is a set of elevation isolines, not a surface. The analysis therefore reconstructs a continuous surface first, then routes water across it using standard D8 flow modelling, and finally delineates the area draining to a chosen point. Every value is derived from the uploaded file &mdash; no coordinates, elevations, or areas are hard-coded.</p>
+
+      <ol class="pipeline">
+        <li class="stage">
+          <div class="stage-num" aria-hidden="true"></div>
+          <div class="stage-body">
+            <h4>Read the contour geometry</h4>
+            <p>Each KML <code>Placemark</code> containing a <code>LineString</code> is read as one contour line, taking its elevation from the placemark's <code>&lt;name&gt;</code> and its vertices from the <code>&lt;coordinates&gt;</code> list. A KMZ is unzipped first, with its uncompressed entry size checked beforehand so a malformed archive cannot exhaust memory.</p>
+            <p class="stage-meta">infrastructure/kml_parser.py</p>
+          </div>
+        </li>
+        <li class="stage">
+          <div class="stage-num" aria-hidden="true"></div>
+          <div class="stage-body">
+            <h4>Interpolate a continuous elevation surface</h4>
+            <p>Every contour vertex becomes a 3-D sample. Those samples are interpolated onto a 300&times;300 grid spanning the file's own bounding box using linear interpolation. Cells outside the survey's convex hull cannot be interpolated, so they are filled by nearest-neighbour and flagged in a validity mask, which travels with the grid so extrapolated filler is never later mistaken for real terrain.</p>
+            <p class="stage-meta">scipy.interpolate.griddata &middot; 300 &times; 300 cells</p>
+          </div>
+        </li>
+        <li class="stage">
+          <div class="stage-num" aria-hidden="true"></div>
+          <div class="stage-body">
+            <h4>Locate genuine depressions &mdash; before conditioning</h4>
+            <p>A cell is a depression if it sits at or below every neighbour in its 3&times;3 window. This runs on the <em>raw</em> grid, because the conditioning in the next step deliberately erases depressions; detecting them afterwards would find none. Cells flagged as interpolated filler are excluded, and a margin around the edge is ignored.</p>
+            <p class="stage-meta">scipy.ndimage.minimum_filter</p>
+          </div>
+        </li>
+        <li class="stage">
+          <div class="stage-num" aria-hidden="true"></div>
+          <div class="stage-body">
+            <h4>Condition the surface and route the flow</h4>
+            <p>Pits are filled, depressions flooded, and flat areas resolved, so that every cell has a defined downhill neighbour. D8 flow directions are then computed, and flow accumulation counts how many upslope cells drain through each cell &mdash; the standard measure of where water concentrates.</p>
+            <p class="stage-meta">pysheds &middot; fill_pits &rarr; fill_depressions &rarr; resolve_flats &rarr; flowdir &rarr; accumulation</p>
+          </div>
+        </li>
+        <li class="stage">
+          <div class="stage-num" aria-hidden="true"></div>
+          <div class="stage-body">
+            <h4>Choose a pond site</h4>
+            <p>Candidates are sampled across the grid and ranked by flow accumulation, with genuine depressions preferred over bare accumulation maxima &mdash; a natural hollow needs less excavation and holds water without a bund. Each candidate's catchment is traced and kept only if its area falls within the target band. The site is addressed by grid index rather than coordinate, so the traced catchment is guaranteed to contain the site it was traced from.</p>
+            <p class="stage-meta">Target band 1&ndash;5 ha &middot; 20&times;20 sampling divisions</p>
+          </div>
+        </li>
+        <li class="stage">
+          <div class="stage-num" aria-hidden="true"></div>
+          <div class="stage-body">
+            <h4>Delineate the catchment</h4>
+            <p>All cells draining to the chosen site are traced through the D8 directions. Cell count times per-cell ground area gives the catchment area, and the mask's outline is vectorised into a closed boundary ring returned as coordinates. As a correctness check, the traced cell count must equal the flow accumulation reported at that site &mdash; the two are the same quantity computed by different routes.</p>
+            <p class="stage-meta">Returned as catchment_area_m2 and catchment_boundary</p>
+          </div>
+        </li>
+        <li class="stage">
+          <div class="stage-num" aria-hidden="true"></div>
+          <div class="stage-body">
+            <h4>Size the pond against two physical bounds</h4>
+            <p>A flood-fill raises a water level from the site in 40 steps, integrating area against depth to measure what the landform can actually hold, and stopping if the water would spill. Separately, annual runoff is estimated as rainfall &times; catchment area &times; a runoff coefficient. Each candidate depth is sized to the <em>smaller</em> of the two: a basin bigger than the water available would sit part-full, and a volume the land cannot hold is not a pond.</p>
+            <p class="stage-meta">Depths 2 m / 3 m / 4 m &middot; runoff coefficient 0.25</p>
+          </div>
+        </li>
+      </ol>
+
+      <div class="callout">
+        <span class="label">Why the catchment is capped at 5 hectares</span>
+        <p>Indian watershed practice treats two structures separately: a <strong>farm pond</strong>, a dug excavation serving a few hectares, and a <strong>check dam</strong> or percolation tank, a bund across a drainage line serving tens of hectares. An earlier 1&ndash;50&nbsp;ha band returned check-dam-scale results and described them as ponds. Constraining site selection to 1&ndash;5&nbsp;ha targets farm-pond scale at the cause, rather than clamping the output afterwards.</p>
+      </div>
+    </section>
+
+    <section id="demo">
+      <h2>Demonstration</h2>
+      <p class="section-note">Sample contour map &middot; 6.7 MB &middot; 1,355 contour lines at 1 m interval</p>
+
+      <p>Posting the provided sample map returns HTTP 200 with the following analysis. The site lies in the surveyed area's southern valley floor, and the catchment traced from it covers 4.35 hectares.</p>
+
+      <div class="metrics">
+        <div class="metric"><span class="v">4.35 ha</span><span class="l">Catchment area</span></div>
+        <div class="metric"><span class="v">457</span><span class="l">Catchment cells</span></div>
+        <div class="metric"><span class="v">457</span><span class="l">Flow accumulation</span></div>
+        <div class="metric"><span class="v">31 m</span><span class="l">Elevation range</span></div>
+        <div class="metric"><span class="v">1,355</span><span class="l">Contour lines</span></div>
+      </div>
+
+      <p>Cell count and flow accumulation agreeing exactly is the correctness check described above: in D8 routing the number of cells draining to a point <em>is</em> the accumulation at that point, so any disagreement would indicate the catchment had been traced from the wrong cell.</p>
+
+      <h3>Response (abridged)</h3>
+<pre><code>{
+  <span class="k">"pond_location"</span>: { <span class="k">"lat"</span>: <span class="n">21.242871412836838</span>, <span class="k">"lon"</span>: <span class="n">81.30447177886963</span> },
+  <span class="k">"catchment_area_m2"</span>: <span class="n">43530.35752952682</span>,
+  <span class="k">"catchment_area_hectares"</span>: <span class="n">4.353035752952682</span>,
+  <span class="k">"catchment_cell_count"</span>: <span class="n">457</span>,
+  <span class="k">"flow_accumulation_at_pond"</span>: <span class="n">457.0</span>,
+  <span class="k">"catchment_boundary"</span>: [ [<span class="n">81.30504455566405</span>, <span class="n">21.243227785895062</span>], <span class="c">/* 53 points, closed ring */</span> ],
+  <span class="k">"source_bbox"</span>: {
+    <span class="k">"min_lon"</span>: <span class="n">81.2814044952393</span>, <span class="k">"min_lat"</span>: <span class="n">21.2398224433387</span>,
+    <span class="k">"max_lon"</span>: <span class="n">81.3126468658447</span>, <span class="k">"max_lat"</span>: <span class="n">21.2635806472203</span>
+  },
+  <span class="k">"grid_resolution"</span>: <span class="n">300</span>,
+  <span class="k">"min_elevation"</span>: <span class="n">267.0</span>,
+  <span class="k">"max_elevation"</span>: <span class="n">298.0</span>,
+  <span class="k">"average_annual_rainfall_mm"</span>: <span class="n">1415.2</span>,
+  <span class="k">"runoff_volume_m3"</span>: <span class="n">15401.0</span>,
+  <span class="k">"runoff_coefficient"</span>: <span class="n">0.25</span>,
+  <span class="k">"pond_options"</span>: [
+    { <span class="k">"depth_m"</span>: <span class="n">2.0</span>, <span class="k">"surface_area_m2"</span>: <span class="n">3950.6</span>, <span class="k">"side_length_m"</span>: <span class="n">62.9</span>, <span class="k">"runoff_capture_ratio"</span>: <span class="n">0.513</span> },
+    { <span class="k">"depth_m"</span>: <span class="n">3.0</span>, <span class="k">"surface_area_m2"</span>: <span class="n">5133.7</span>, <span class="k">"side_length_m"</span>: <span class="n">71.6</span>, <span class="k">"runoff_capture_ratio"</span>: <span class="n">1.0</span> },
+    { <span class="k">"depth_m"</span>: <span class="n">4.0</span>, <span class="k">"surface_area_m2"</span>: <span class="n">3850.3</span>, <span class="k">"side_length_m"</span>: <span class="n">62.1</span>, <span class="k">"runoff_capture_ratio"</span>: <span class="n">1.0</span> }
+  ],
+  <span class="k">"contours"</span>: [ <span class="c">/* 1355 lines, original KML precision */</span> ]
+}</code></pre>
+
+      <h3>Reading the pond options</h3>
+      <p>The capture ratio identifies which bound is binding. At 2&nbsp;m the pond is <strong>terrain-limited</strong> &mdash; the landform holds only 51% of the year's runoff, and the rest would overflow. At 3&nbsp;m and 4&nbsp;m it is <strong>runoff-limited</strong>: the terrain could hold more, but the catchment does not deliver more, so the pond is sized to the water that actually arrives rather than to the hole that could be dug.</p>
+    </section>
+
+    <section id="api">
+      <h2>API documentation</h2>
+      <p class="section-note">POST /analyzeContour</p>
+
+      <h3>Request</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">contour_map</td><td class="mono">file</td><td>The contour map. <code>.kml</code> or <code>.kmz</code>. <span class="pill req">required</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Encoding is <code>multipart/form-data</code>. No authentication, headers, or query parameters are required.</p>
+
+      <h3>Response fields</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">pond_location</td><td class="mono">object</td><td>Recommended pond site as <code>lat</code> / <code>lon</code>.</td></tr>
+            <tr><td class="mono">catchment_area_m2</td><td class="mono">number</td><td>Delineated catchment area in square metres.</td></tr>
+            <tr><td class="mono">catchment_area_hectares</td><td class="mono">number</td><td>The same area in hectares.</td></tr>
+            <tr><td class="mono">catchment_cell_count</td><td class="mono">integer</td><td>Grid cells draining to the site.</td></tr>
+            <tr><td class="mono">flow_accumulation_at_pond</td><td class="mono">number</td><td>D8 accumulation at the site. Equals the cell count when the analysis is self-consistent.</td></tr>
+            <tr><td class="mono">catchment_boundary</td><td class="mono">array</td><td>Closed ring of <code>[lon, lat]</code> pairs outlining the catchment.</td></tr>
+            <tr><td class="mono">source_bbox</td><td class="mono">object</td><td>Geographic extent of the uploaded map.</td></tr>
+            <tr><td class="mono">grid_resolution</td><td class="mono">integer</td><td>Analysis grid size per side (300).</td></tr>
+            <tr><td class="mono">min_elevation<br>max_elevation</td><td class="mono">number</td><td>Elevation range across the interpolated surface, in metres.</td></tr>
+            <tr><td class="mono">contours</td><td class="mono">array</td><td>The map's own contour lines, at original precision: <code>elevation</code> plus <code>[lon, lat]</code> coordinates.</td></tr>
+            <tr><td class="mono">average_annual_rainfall_mm</td><td class="mono">number &#124; null</td><td>Ten-year mean annual rainfall at the map's centroid.</td></tr>
+            <tr><td class="mono">runoff_volume_m3</td><td class="mono">number &#124; null</td><td>Estimated annual runoff reaching the site.</td></tr>
+            <tr><td class="mono">runoff_coefficient</td><td class="mono">number &#124; null</td><td>Fraction of rainfall assumed to become runoff.</td></tr>
+            <tr><td class="mono">pond_options</td><td class="mono">array</td><td>One sizing option per candidate depth &mdash; see below.</td></tr>
+            <tr><td class="mono">available_land_hectares</td><td class="mono">number &#124; null</td><td>Land free of buildings, roads and water bodies nearby.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Pond option fields</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">depth_m</td><td class="mono">number</td><td>Candidate excavation depth: 2, 3 or 4 metres.</td></tr>
+            <tr><td class="mono">surface_area_m2</td><td class="mono">number</td><td>Footprint needed to hold the bounded volume at this depth.</td></tr>
+            <tr><td class="mono">side_length_m</td><td class="mono">number</td><td>The same footprint expressed as a square's side.</td></tr>
+            <tr><td class="mono">runoff_capture_ratio</td><td class="mono">number &#124; null</td><td>Share of annual runoff held. Below 1.0 is terrain-limited; exactly 1.0 is runoff-limited.</td></tr>
+            <tr><td class="mono">fits_available_land</td><td class="mono">boolean &#124; null</td><td>Whether the footprint fits the land available nearby.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Status codes</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Code</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">200</td><td>Analysis complete.</td></tr>
+            <tr><td class="mono">422</td><td>Missing <code>contour_map</code> field, a file that is not <code>.kml</code>/<code>.kmz</code>, or a file that cannot be parsed as contour geometry. The message names the cause.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout">
+        <span class="label">Degraded responses</span>
+        <p>Rainfall and land-use figures come from third-party services (Open-Meteo and Overpass). If either is unreachable or rate-limited, its fields return <code>null</code> rather than failing the request, and pond options are then sized by terrain capacity alone. The catchment analysis is computed entirely from the uploaded file, so it is unaffected &mdash; no external service can suppress the primary result.</p>
+      </div>
+    </section>
+
+    <section id="extensibility">
+      <h2>Extensibility</h2>
+      <p class="section-note">Designed for generalised contour maps in the next phase</p>
+
+      <h3>The analysis core is input-agnostic</h3>
+      <p>The catchment engine takes an elevation grid and a bounding box &mdash; not a KML. The uploaded-file path and a second path that fetches a DEM for a map click both call the same function and return the same response shape. A new terrain source in a later phase becomes a new parser, with no change to the analysis.</p>
+
+      <h3>Layers are separated by what they touch</h3>
+      <ul>
+        <li><strong>domain/</strong> &mdash; pure calculation: catchment delineation, runoff, pond sizing, land availability. No I/O, so each piece is unit-testable in isolation.</li>
+        <li><strong>infrastructure/</strong> &mdash; everything that talks to the outside world: KML parsing, rainfall, land use, elevation, caching.</li>
+        <li><strong>services/</strong> &mdash; orchestration across several domain functions and clients.</li>
+        <li><strong>api/</strong> &mdash; HTTP concerns only, with no business logic.</li>
+      </ul>
+
+      <h3>Tuning values are named constants, not literals</h3>
+      <p>Grid resolution, the catchment target band, candidate depths, flood-fill resolution and sampling density are all named constants carrying the reasoning for their value. Retargeting the tool at a different structure &mdash; a check dam rather than a farm pond &mdash; is a constant change, not a rewrite.</p>
+
+      <h3>The runoff model is ready to be replaced</h3>
+      <p>Runoff currently uses the rainfall-coefficient method and tags every result with the method that produced it. The intended upgrade is SCS Curve Number, using land-cover data the project already fetches; the tag exists so a response can say which model produced it once both are available.</p>
+
+      <h3>Verification</h3>
+      <p>104 backend tests cover the domain calculations, the KML and KMZ parsing paths, and the endpoint's upload contract, including invariants that previously failed &mdash; that a pond site must lie inside its own catchment, and that a bowl-shaped basin must report non-zero storage.</p>
+    </section>
+
+    <section id="limits">
+      <h2>Known limitations</h2>
+      <p class="section-note">Stated plainly, for the next phase</p>
+
+      <ul>
+        <li><strong>Elevation is read from the placemark name.</strong> Each contour's height comes from its <code>&lt;name&gt;</code> parsed as a number, which matches the sample map's convention. Maps that carry elevation in a description, an extended data field, or the coordinate's Z value will need the parser extended &mdash; a contained change in one module.</li>
+        <li><strong>The analysis grid is fixed at 300&times;300.</strong> Ground resolution therefore varies with the size of the uploaded area. A much larger survey would be analysed more coarsely.</li>
+        <li><strong>The runoff coefficient is a single constant (0.25).</strong> It does not yet vary with soil, slope or land cover, and is the least defensible number in the chain.</li>
+        <li><strong>Only farm-pond scale is proposed.</strong> By design, site selection targets 1&ndash;5&nbsp;ha. For a larger catchment the tool prefers a smaller sub-catchment rather than proposing a check dam.</li>
+        <li><strong>One site is returned, not a ranked set.</strong> Candidates are already scored internally, so returning the best three is a natural next step.</li>
+        <li><strong>First request after a restart is slow.</strong> Cold library loading and just-in-time compilation of the routing code make the first analysis noticeably slower than subsequent ones.</li>
+      </ul>
+    </section>
+
+  </main>
+
+  <footer>
+    HydroSage &middot; Phase 1 &middot; Kunal Sewal (12341270) &middot; github.com/KunalSewal/HydroSage
+  </footer>
+
+</div>

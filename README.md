@@ -4,8 +4,23 @@
 
 A web application that recommends suitable pond-construction sites for rural water conservation, by analyzing terrain elevation, catchment area, rainfall, and land availability. Built for village administrators who currently have to make these siting decisions without access to the underlying terrain and rainfall data.
 
+## Phase 1 submission
+
+**[docs/PHASE1_REPORT.md](docs/PHASE1_REPORT.md)** — the submission report: catchment
+estimation approach, demonstration on the provided sample map, and full API documentation.
+
+The graded endpoint is `POST /analyzeContour`, which takes a KML/KMZ contour map as
+`contour_map` (multipart form data) and returns the sited pond and its delineated
+catchment as JSON:
+
+```bash
+curl -X POST http://10.1.75.53:3265/analyzeContour \
+  -F "contour_map=@contours_1m.kml"
+```
+
 ## Documentation
 
+- [docs/PHASE1_REPORT.md](docs/PHASE1_REPORT.md) — Phase 1 submission report
 - [docs/PROJECT_BRIEF.md](docs/PROJECT_BRIEF.md) — product requirements
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — architecture and design rationale
 - [docs/DECISIONS.md](docs/DECISIONS.md) — decision log
