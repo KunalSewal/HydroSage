@@ -21,7 +21,7 @@ import logging
 from datetime import date
 
 from app.domain.land_availability import estimate_available_land
-from app.domain.pond import size_pond_options
+from app.domain.pond import capture_ratio, size_pond_options
 from app.domain.rainfall import summarize_rainfall
 from app.domain.runoff import estimate_annual_runoff_volume
 from app.infrastructure.elevation_client import BoundingBox
@@ -85,14 +85,7 @@ def compute_recommendation_fields(
                 surface_area_m2=o.surface_area_m2,
                 side_length_m=o.side_length_m,
                 fits_available_land=(o.surface_area_m2 <= available_land_m2) if available_land_m2 is not None else None,
-                # Derived from the option's own bounded volume, not the raw
-                # terrain capacity -- otherwise this would still report the
-                # unbounded ratio the sizing no longer uses.
-                runoff_capture_ratio=(
-                    (o.surface_area_m2 * o.depth_m) / runoff.runoff_volume_m3
-                    if runoff.runoff_volume_m3 > 0
-                    else None
-                ),
+                runoff_capture_ratio=capture_ratio(o, runoff.runoff_volume_m3),
             )
             for o in pond_options
         ],

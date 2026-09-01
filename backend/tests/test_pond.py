@@ -1,6 +1,6 @@
 import pytest
 
-from app.domain.pond import CANDIDATE_DEPTHS_M, recommend_pond_dimensions, size_pond_options
+from app.domain.pond import CANDIDATE_DEPTHS_M, capture_ratio, recommend_pond_dimensions, size_pond_options
 
 
 def test_recommend_pond_dimensions_back_solves_area_from_volume_and_depth():
@@ -58,7 +58,9 @@ def test_size_pond_options_uses_terrain_capacity_when_it_is_the_smaller_bound():
     by_depth = {o.depth_m: o for o in options}
 
     assert by_depth[2.0].surface_area_m2 == pytest.approx(2000.0)
+    assert by_depth[2.0].side_length_m == pytest.approx(2000.0**0.5)
     assert by_depth[3.0].surface_area_m2 == pytest.approx(3000.0)
+    assert by_depth[3.0].side_length_m == pytest.approx(3000.0**0.5)
 
 
 def test_size_pond_options_uses_annual_runoff_when_it_is_the_smaller_bound():
@@ -93,3 +95,30 @@ def test_size_pond_options_never_sizes_beyond_the_annual_runoff():
 def test_size_pond_options_returns_options_sorted_by_depth():
     options = size_pond_options({4.0: 8000.0, 2.0: 4000.0, 3.0: 6000.0}, annual_runoff_m3=1e9)
     assert [o.depth_m for o in options] == [2.0, 3.0, 4.0]
+
+
+def test_capture_ratio_never_exceeds_one_for_runoff_limited_options():
+    # The runoff bound means stored volume can never exceed a year's runoff,
+    # so the ratio must be exactly 1.0 -- not a hair above it, which is what
+    # reconstructing the volume from area x depth used to produce.
+    for runoff in (10_000.0, 15_401.0, 92_574.3, 1_234.567):
+        for option in size_pond_options({2.0: 1e9, 3.0: 1e9, 4.0: 1e9}, annual_runoff_m3=runoff):
+            assert capture_ratio(option, runoff) <= 1.0
+
+
+def test_capture_ratio_reports_the_terrain_limited_share():
+    option = size_pond_options({2.0: 4000.0}, annual_runoff_m3=10_000.0)[0]
+    assert capture_ratio(option, 10_000.0) == pytest.approx(0.4)
+
+
+def test_capture_ratio_is_none_when_there_is_no_runoff():
+    option = size_pond_options({2.0: 4000.0}, annual_runoff_m3=0.0)[0]
+    assert capture_ratio(option, 0.0) is None
+
+
+def test_size_pond_options_records_the_bounded_volume_on_each_option():
+    options = size_pond_options({2.0: 6000.0, 4.0: 900_000.0}, annual_runoff_m3=40_000.0)
+    by_depth = {o.depth_m: o for o in options}
+
+    assert by_depth[2.0].volume_m3 == pytest.approx(6000.0)    # terrain-limited
+    assert by_depth[4.0].volume_m3 == pytest.approx(40_000.0)  # runoff-limited

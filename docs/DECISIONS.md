@@ -114,7 +114,7 @@ Status: Accepted — supersedes the Celery/worker part of D-001
 ## D-007: Pond sizing — demand-driven (100% of annual runoff) to supply-driven (terrain flood-fill capacity)
 
 Date: 2026-09-01
-Status: Accepted
+Status: Superseded by D-010 (the runoff_capture_ratio being unbounded only — the rest of this decision still stands)
 
 **Context:** `domain/pond.py`'s `recommend_pond_dimensions` targeted a storage volume equal to 100% of one year's estimated catchment runoff (`domain/runoff.py`'s coefficient method), then back-solved a flat square footprint at each candidate depth. Once depression-preferred site selection (see the catchment/pond-volume improvements plan, 2026-09-01) started reliably landing on realistically-sized catchments near the top of the documented 1-50ha range, this produced reservoir-scale pond dimensions in the live app — e.g. a 213.7m × 213.7m × 2m pond (~91,000 m³) for a 25.8ha catchment — confirmed by the user testing the deployed app directly. The catchment area itself was not the problem (well within the documented realistic range); the demand target (capture 100% of annual runoff from tens of hectares in a single small pond) was.
 

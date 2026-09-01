@@ -254,8 +254,14 @@ def _select_pond_site(
         if best_fallback is None or distance < best_fallback[0]:
             best_fallback = (distance, candidate, mask, area_m2)
 
-    logger.info("no sampled candidate's catchment fit the target area range; using the closest fallback")
     _distance, candidate, mask, area_m2 = best_fallback
+    logger.warning(
+        "no sampled candidate's catchment fit the target area range "
+        "(%d-%d m^2); using the closest fallback, area=%.1f m^2",
+        MIN_CATCHMENT_AREA_M2,
+        MAX_CATCHMENT_AREA_M2,
+        area_m2,
+    )
     return candidate, mask, area_m2
 
 

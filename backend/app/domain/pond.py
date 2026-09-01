@@ -41,6 +41,7 @@ class PondOption:
     depth_m: float
     surface_area_m2: float
     side_length_m: float  # assuming a square footprint
+    volume_m3: float = 0.0  # the storage this footprint holds at this depth
 
 
 @dataclass(frozen=True)
@@ -64,6 +65,7 @@ def recommend_pond_dimensions(
             depth_m=depth,
             surface_area_m2=(area := target_storage_m3 / depth),
             side_length_m=area**0.5,
+            volume_m3=target_storage_m3,
         )
         for depth in candidate_depths_m
     ]
@@ -98,12 +100,35 @@ def size_pond_options(
     flood-fill's own traced inundation shape at that depth -- an irregular
     basin's actual water surface at a given depth is generally larger than
     volume/depth would suggest for a flat-bottomed prism.
+
+    volume_m3 on each returned option carries this same bounded volume
+    directly, so callers don't need to reconstruct it (lossily) from
+    surface_area_m2 * depth_m.
     """
-    return [
-        PondOption(
-            depth_m=depth,
-            surface_area_m2=(area := min(terrain_capacity_m3, annual_runoff_m3) / depth),
-            side_length_m=area**0.5,
+    options = []
+    for depth, terrain_capacity_m3 in sorted(achievable_volume_m3_by_depth.items()):
+        volume_m3 = min(terrain_capacity_m3, annual_runoff_m3)
+        area = volume_m3 / depth
+        options.append(
+            PondOption(
+                depth_m=depth,
+                surface_area_m2=area,
+                side_length_m=area**0.5,
+                volume_m3=volume_m3,
+            )
         )
-        for depth, terrain_capacity_m3 in sorted(achievable_volume_m3_by_depth.items())
-    ]
+    return options
+
+
+def capture_ratio(option: PondOption, annual_runoff_m3: float) -> float | None:
+    """What share of a typical year's catchment runoff this option holds.
+
+    Returns None when there is no runoff to compare against, rather than
+    dividing by zero. Reads the option's own recorded volume rather than
+    reconstructing it from area x depth -- that round-trip is lossy enough
+    to return values a hair above 1.0, which would break the documented
+    guarantee that a ratio of exactly 1.0 means runoff-limited.
+    """
+    if annual_runoff_m3 <= 0:
+        return None
+    return option.volume_m3 / annual_runoff_m3
