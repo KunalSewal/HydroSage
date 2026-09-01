@@ -32,6 +32,18 @@ from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
+# uvicorn installs its own logging configuration when it starts, and an app
+# logger that merely propagates can end up with nothing attached to it. On this
+# deployment the memory trace below is the only diagnostic available -- the
+# container is capped at 512 MB and an overrun arrives as SIGKILL with no
+# traceback -- so the handler is attached explicitly rather than inherited.
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(levelname)s:     [hydrosage] %(message)s"))
+    logger.addHandler(_handler)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+
 settings = get_settings()
 
 
@@ -102,6 +114,19 @@ app.add_middleware(
 )
 
 app.include_router(analyze_contour.router)
+
+
+@app.on_event("startup")
+async def _log_memory_configuration() -> None:
+    """States the memory setup once at startup, so a deployment's log says
+    plainly whether the reclaim is active rather than leaving it to be
+    inferred from the absence of a warning."""
+    logger.info(
+        "memory guard: malloc_trim=%s, rss_readable=%s, recycle_above=%.0f MB",
+        "yes" if _malloc_trim is not None else "NO",
+        "yes" if _rss_mb() is not None else "NO",
+        _RECYCLE_ABOVE_MB,
+    )
 
 
 @app.middleware("http")
