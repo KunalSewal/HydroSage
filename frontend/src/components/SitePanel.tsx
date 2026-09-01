@@ -172,7 +172,7 @@ export default function SitePanel({ state, onAnalyze, onRetry, onGetRecommendati
                       <div className="flex items-start gap-2">
                         <Ruler className="mt-0.5 h-4 w-4 text-hs-teal" />
                         <div className="flex flex-col gap-1">
-                          <span className="text-xs text-hs-muted">Pond size options (sized to terrain capacity):</span>
+                          <span className="text-xs text-hs-muted">Pond size options (limited by terrain capacity and annual runoff):</span>
                           {state.recommendation.pond_options.map((option) => (
                             <div key={option.depth_m} className="flex items-center gap-1.5 text-xs">
                               <span className="font-medium text-hs-cream">
