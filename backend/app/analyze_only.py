@@ -17,13 +17,45 @@ endpoint is needed:
 deployment that runs the whole stack.
 """
 
-from fastapi import FastAPI
+import ctypes
+import ctypes.util
+import gc
+import logging
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import analyze_contour
 from app.core.config import get_settings
 
+logger = logging.getLogger(__name__)
+
 settings = get_settings()
+
+
+def _load_malloc_trim():
+    """glibc's malloc_trim, or None where it doesn't exist.
+
+    An analysis frees hundreds of megabytes, but glibc keeps that memory on
+    the process heap rather than returning it to the OS, so RSS stays high
+    and the *next* request starts from a raised floor. Measured across three
+    consecutive requests the peak crept 497 -> 511 -> 513 MB and crossed the
+    512 MB cgroup limit on the third (docs/DECISIONS.md D-012).
+
+    Absent on Windows and macOS, where this is a no-op and the caller simply
+    relies on gc.
+    """
+    try:
+        libc_name = ctypes.util.find_library("c")
+        if libc_name is None:
+            return None
+        libc = ctypes.CDLL(libc_name)
+        return libc.malloc_trim
+    except (OSError, AttributeError):
+        return None
+
+
+_malloc_trim = _load_malloc_trim()
 
 app = FastAPI(
     title=settings.app_name,
@@ -39,6 +71,26 @@ app.add_middleware(
 )
 
 app.include_router(analyze_contour.router)
+
+
+@app.middleware("http")
+async def release_memory_after_request(request: Request, call_next):
+    """Returns the request's freed heap to the OS before the next one starts.
+
+    Without this each analysis raises the floor the next one builds on, and
+    the third consecutive request exceeds the container's memory limit even
+    though the first two fit. Runs after the response is produced, so it
+    costs nothing a client waits on.
+    """
+    response = await call_next(request)
+    if request.url.path == "/analyzeContour":
+        gc.collect()
+        if _malloc_trim is not None:
+            try:
+                _malloc_trim(0)
+            except Exception:  # noqa: BLE001 -- reclaiming memory must never fail a served response
+                logger.warning("malloc_trim failed; continuing", exc_info=True)
+    return response
 
 
 @app.get("/health", tags=["health"])
