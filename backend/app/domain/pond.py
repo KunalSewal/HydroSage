@@ -67,24 +67,30 @@ def recommend_pond_dimensions(
     return PondRecommendation(target_storage_m3=target_storage_m3, options=options)
 
 
-def size_pond_from_terrain_capacity(
+def size_pond_options(
     achievable_volume_m3_by_depth: dict[float, float],
+    annual_runoff_m3: float,
 ) -> list[PondOption]:
-    """Back-solves a flat square footprint at each candidate depth from
-    the site's own real terrain-holding capacity at that depth
-    (domain/catchment.py's flood-fill), rather than an aspirational
-    demand target. This answers a different question than
-    recommend_pond_dimensions above: not "how big must the pond be to
-    capture a year's runoff" but "how big can the pond actually be at
-    this site" -- the two diverge whenever the catchment is large enough
-    that capturing its full annual runoff would mean an unrealistic,
-    reservoir-scale pond (see docs/DECISIONS.md D-007). This is the
-    app's primary pond-sizing entry point (see services/recommendation.py);
-    recommend_pond_dimensions remains available for a target-volume use
-    case, but is no longer how the app's own recommendation is sized.
+    """Back-solves a flat square footprint at each candidate depth from the
+    smaller of two real physical bounds:
+
+    * what the terrain can hold at that depth (domain/catchment.py's
+      flood-fill over the actual landform), and
+    * what the catchment actually delivers in a year (domain/runoff.py).
+
+    Sizing to terrain alone overshoots whenever the basin is larger than
+    the water available to fill it -- a pond that would only ever be part
+    full is wasted excavation. Sizing to runoff alone overshoots whenever
+    the landform cannot hold that much. The binding bound is whichever is
+    smaller, and it varies by depth (see docs/DECISIONS.md D-010).
+
+    This is the app's primary pond-sizing entry point (see
+    services/recommendation.py); recommend_pond_dimensions remains
+    available for a target-volume use case, but is no longer how the
+    app's own recommendation is sized.
 
     Note: surface_area_m2 describes a flat-bottomed square footprint sized to
-    hold this depth's achievable volume (the excavation you'd dig), not the
+    hold this depth's bounded volume (the excavation you'd dig), not the
     flood-fill's own traced inundation shape at that depth -- an irregular
     basin's actual water surface at a given depth is generally larger than
     volume/depth would suggest for a flat-bottomed prism.
@@ -92,8 +98,8 @@ def size_pond_from_terrain_capacity(
     return [
         PondOption(
             depth_m=depth,
-            surface_area_m2=(area := volume / depth),
+            surface_area_m2=(area := min(terrain_capacity_m3, annual_runoff_m3) / depth),
             side_length_m=area**0.5,
         )
-        for depth, volume in sorted(achievable_volume_m3_by_depth.items())
+        for depth, terrain_capacity_m3 in sorted(achievable_volume_m3_by_depth.items())
     ]

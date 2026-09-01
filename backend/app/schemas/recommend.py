@@ -10,11 +10,12 @@ class PondOptionOut(BaseModel):
     # None when available-land data couldn't be determined (e.g. the
     # Overpass API was unreachable) -- absence of an answer, not "false".
     fits_available_land: bool | None
-    # This depth's terrain capacity as a multiple of a typical year's
-    # catchment runoff (e.g. 0.15 = 15% of a year's runoff; a value
-    # above 1.0 means the terrain could hold more than a year's runoff).
-    # Unbounded, not a 0-1 fraction. None only when runoff_volume_m3 is
-    # exactly 0, to avoid dividing by zero.
+    # What share of a typical year's catchment runoff this depth's pond
+    # holds. Bounded to at most 1.0, since the pond is never sized beyond
+    # the runoff available to fill it. Exactly 1.0 means runoff-limited
+    # (the terrain could hold more, but the catchment doesn't deliver
+    # more); below 1.0 means terrain-limited. None only when
+    # runoff_volume_m3 is exactly 0, to avoid dividing by zero.
     runoff_capture_ratio: float | None
 
 
