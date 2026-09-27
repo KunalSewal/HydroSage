@@ -61,3 +61,21 @@ body {
   background-color: var(--color-hs-mid);
   color: var(--color-hs-amber);
 }
+
+/* The always-on pond label: expected water volume and catchment size. Same doubled-selector reasoning as the zoom control
+   above: leaflet.css lands after this file. */
+.leaflet-tooltip.hydrosage-map-label {
+  background-color: color-mix(in srgb, var(--color-hs-panel) 90%, transparent);
+  color: var(--color-hs-cream);
+  border: 1px solid color-mix(in srgb, var(--color-hs-amber) 40%, transparent);
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.35);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  padding: 4px 8px;
+  white-space: pre; /* one line per fact; never wrap mid-figure */
+}
+.leaflet-tooltip-top.hydrosage-map-label::before {
+  border-top-color: color-mix(in srgb, var(--color-hs-panel) 90%, transparent);
+}

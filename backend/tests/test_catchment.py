@@ -330,3 +330,56 @@ def test_analyze_catchment_no_valid_mask_matches_an_all_true_valid_mask():
     assert result_default.pond_lat == result_all_true.pond_lat
     assert result_default.pond_lon == result_all_true.pond_lon
     assert result_default.catchment_area_m2 == result_all_true.catchment_area_m2
+
+
+# ---- site_mask: pond siting limited to a user-drawn area ----
+
+
+def test_sample_candidates_stay_inside_a_site_mask():
+    acc = np.random.default_rng(seed=3).random((60, 60)) * 100
+    acc[5, 5] = 10_000.0  # the strongest cell overall, but outside the mask
+    site_mask = np.zeros_like(acc, dtype=bool)
+    site_mask[30:40, 30:40] = True
+
+    candidates = _sample_candidates(acc, margin_rows=2, margin_cols=2, site_mask=site_mask)
+
+    assert candidates
+    assert all(site_mask[c.row, c.col] for c in candidates)
+
+
+def test_sample_candidates_samples_densely_inside_a_small_site_mask():
+    # A mask covering a small corner of a large grid must still get a
+    # spread of candidates, not the one or two coarse whole-grid samples
+    # that happen to land inside it.
+    acc = np.random.default_rng(seed=4).random((300, 300))
+    site_mask = np.zeros_like(acc, dtype=bool)
+    site_mask[200:230, 200:230] = True
+
+    candidates = _sample_candidates(acc, margin_rows=5, margin_cols=5, site_mask=site_mask)
+
+    assert len(candidates) >= 50
+
+
+def test_analyze_catchment_puts_the_pond_inside_the_site_mask():
+    size = 200
+    y, x = np.mgrid[0:size, 0:size]
+    elevation = (x + y).astype(np.float64)  # the unrestricted best site is near (0, 0)
+    bbox = _bbox_km(6.0)
+    site_mask = np.zeros_like(elevation, dtype=bool)
+    site_mask[120:170, 120:170] = True
+
+    result = analyze_catchment(elevation, bbox, site_mask=site_mask)
+
+    height, width = elevation.shape
+    col = int((result.pond_lon - bbox.min_lon) / (bbox.max_lon - bbox.min_lon) * width)
+    row = int((bbox.max_lat - result.pond_lat) / (bbox.max_lat - bbox.min_lat) * height)
+    assert site_mask[row, col]
+
+
+def test_analyze_catchment_rejects_a_site_mask_with_no_usable_cells():
+    elevation = _radial_basin()
+    site_mask = np.zeros_like(elevation, dtype=bool)
+    site_mask[0, 0] = True  # only an edge cell, which the margin always excludes
+
+    with pytest.raises(ValueError, match="selected area"):
+        analyze_catchment(elevation, _bbox_km(3.0), site_mask=site_mask)

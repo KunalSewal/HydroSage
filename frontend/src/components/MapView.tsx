@@ -1,7 +1,20 @@
 import 'leaflet/dist/leaflet.css'
+import '../lib/leafletGlobal'
+import '@geoman-io/leaflet-geoman-free'
+import '@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css'
 import L from 'leaflet'
 import { useEffect, useMemo, useState } from 'react'
-import { MapContainer, Marker, Polygon, Polyline, TileLayer, ZoomControl, useMap, useMapEvents } from 'react-leaflet'
+import {
+  MapContainer,
+  Marker,
+  Polygon,
+  Polyline,
+  TileLayer,
+  Tooltip,
+  ZoomControl,
+  useMap,
+  useMapEvents,
+} from 'react-leaflet'
 import type { BoundingBox, Contour } from '../api/client'
 import { contourColor } from '../lib/contourColor'
 import { resolveFocusBounds, type FocusBounds } from '../lib/mapFocus'
@@ -25,6 +38,15 @@ const pondMarkerIcon = L.divIcon({
   iconAnchor: [8, 8],
 })
 
+export type DrawShape = 'Polygon' | 'Rectangle'
+
+// A request to start drawing. `nonce` changes on every request, so asking
+// for the same shape twice in a row still starts a new drawing.
+export interface DrawRequest {
+  shape: DrawShape
+  nonce: number
+}
+
 interface MapViewProps {
   center: { lat: number; lon: number }
   markerPosition: { lat: number; lon: number } | null
@@ -40,11 +62,20 @@ interface MapViewProps {
   // resulting position is unchanged -- see RecenterOnChange below for why
   // this needs to be a separate signal from the position itself.
   geoRequestId?: number
+  drawRequest?: DrawRequest | null
+  // Called with the finished shape as a [lon, lat] ring (GeoJSON order).
+  onAreaDrawn?: (ring: [number, number][]) => void
+  selectedArea?: [number, number][] | null
+  // Always-visible label on the pond marker, so the expected water volume
+  // and catchment size read on the map itself (see lib/mapLabels).
+  pondLabel?: string | null
 }
 
 function ClickHandler({ onMapClick }: { onMapClick: (lat: number, lon: number) => void }) {
-  useMapEvents({
+  const map = useMapEvents({
     click(event) {
+      // Clicks that place drawing vertices must not also select a site.
+      if (map.pm.globalDrawModeEnabled()) return
       onMapClick(event.latlng.lat, event.latlng.lng)
     },
   })
@@ -106,6 +137,61 @@ function CatchmentBoundaryLayer({ boundary }: { boundary: [number, number][] }) 
       pathOptions={{ color: '#38bdf8', weight: 2, fillColor: '#38bdf8', fillOpacity: 0.12 }}
     />
   )
+}
+
+// The area the user drew: where the pond may be sited. Dashed, unfilled,
+// and non-interactive so it frames the result without hiding it.
+function SelectedAreaLayer({ area }: { area: [number, number][] }) {
+  return (
+    <Polygon
+      positions={area.map(([lon, lat]) => [lat, lon])}
+      pathOptions={{ color: '#f5c26b', weight: 2, dashArray: '6 6', fill: false }}
+      interactive={false}
+    />
+  )
+}
+
+// Starts a geoman drawing on each new request, and hands the finished shape
+// back as a [lon, lat] ring. geoman's own layer is removed straight away:
+// the app draws the selected area from its own state (SelectedAreaLayer),
+// so there is one source of truth for what's on the map.
+function DrawController({
+  request,
+  onAreaDrawn,
+}: {
+  request: DrawRequest | null
+  onAreaDrawn: (ring: [number, number][]) => void
+}) {
+  const map = useMap()
+
+  // Re-subscribes if onAreaDrawn changes identity, so callers should pass a
+  // stable callback (App.tsx wraps it in useCallback).
+  useEffect(() => {
+    function handleCreate(event: { layer: L.Layer }) {
+      const layer = event.layer as L.Polygon
+      const latlngs = layer.getLatLngs()[0] as L.LatLng[]
+      map.removeLayer(layer)
+      onAreaDrawn(latlngs.map((ll) => [ll.lng, ll.lat]))
+    }
+    map.on('pm:create', handleCreate)
+    return () => {
+      map.off('pm:create', handleCreate)
+    }
+  }, [map, onAreaDrawn])
+
+  useEffect(() => {
+    if (!request) return
+    map.pm.enableDraw(request.shape, {
+      pathOptions: { color: '#f5c26b', weight: 2, dashArray: '6 6', fillOpacity: 0.05 },
+      templineStyle: { color: '#f5c26b' },
+      hintlineStyle: { color: '#f5c26b', dashArray: '4 4' },
+    })
+    return () => {
+      map.pm.disableDraw()
+    }
+  }, [request, map])
+
+  return null
 }
 
 // A useful "you can see individual streets/fields" zoom level -- flyTo used
@@ -186,8 +272,12 @@ export default function MapView({
   fitBoundsTo,
   sheetHeight = 0,
   geoRequestId,
+  drawRequest = null,
+  onAreaDrawn,
+  selectedArea,
+  pondLabel,
 }: MapViewProps) {
-  const focusBounds = resolveFocusBounds(catchmentBoundary, fitBoundsTo)
+  const focusBounds = resolveFocusBounds(catchmentBoundary, fitBoundsTo, selectedArea)
 
   return (
     // Leaflet's zoom control defaults to the top left, directly under the
@@ -217,9 +307,17 @@ export default function MapView({
           key={`pond-${pondLocation.lat}-${pondLocation.lon}`}
           position={[pondLocation.lat, pondLocation.lon]}
           icon={pondMarkerIcon}
-        />
+        >
+          {pondLabel && (
+            <Tooltip direction="top" offset={[0, -10]} className="hydrosage-map-label" permanent>
+              {pondLabel}
+            </Tooltip>
+          )}
+        </Marker>
       )}
+      {selectedArea && <SelectedAreaLayer area={selectedArea} />}
       {catchmentBoundary && <CatchmentBoundaryLayer boundary={catchmentBoundary} />}
+      {onAreaDrawn && <DrawController request={drawRequest} onAreaDrawn={onAreaDrawn} />}
       <ContourLayer contours={contours} />
     </MapContainer>
   )

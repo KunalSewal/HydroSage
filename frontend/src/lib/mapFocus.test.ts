@@ -49,4 +49,20 @@ describe('resolveFocusBounds', () => {
       [21.5, 80.5],
     ])
   })
+
+  it('frames both the drawn area and the catchment when an area was drawn', () => {
+    const catchment: [number, number][] = [
+      [81.30, 21.20],
+      [81.31, 21.21],
+    ]
+    const drawnArea: [number, number][] = [
+      [81.28, 21.19],
+      [81.305, 21.205],
+    ]
+
+    expect(resolveFocusBounds(catchment, null, drawnArea)).toEqual([
+      [21.19, 81.28],
+      [21.21, 81.31],
+    ])
+  })
 })

@@ -1,4 +1,6 @@
-"""A deployment entrypoint carrying only POST /analyzeContour.
+"""A deployment entrypoint carrying only the analysis routes:
+POST /analyzeContour (uploaded KML) and POST /analyzeArea (a land area drawn
+on the map, D-013). Neither needs a database.
 
 `app.main` mounts all seven routers, which transitively imports SQLAlchemy,
 GeoAlchemy2, Celery and MinIO -- roughly 19 MB of resident memory for
@@ -8,8 +10,8 @@ container at 512 MB against a measured peak of 539 MB, so that 19 MB is
 worth reclaiming (see docs/DECISIONS.md D-012).
 
 The analysis itself is untouched: same router, same parser, same domain
-code, same response. Run this instead of app.main where only the contour
-endpoint is needed:
+code, same response. Run this instead of app.main where only the analysis
+endpoints are needed:
 
     uvicorn app.analyze_only:app --host 0.0.0.0 --port 3000
 
@@ -27,7 +29,7 @@ import signal
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import analyze_contour
+from app.api import analyze_area, analyze_contour
 from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -80,6 +82,9 @@ def _load_malloc_trim():
 
 _malloc_trim = _load_malloc_trim()
 
+# Every route that runs the D8 pipeline, and so frees hundreds of MB.
+_ANALYSIS_PATHS = {"/analyzeContour", "/analyzeArea"}
+
 
 # Restart once the resident floor leaves too little room for the next
 # analysis's ~170 MB of transient allocation inside the 512 MB cap. Tunable
@@ -114,6 +119,7 @@ app.add_middleware(
 )
 
 app.include_router(analyze_contour.router)
+app.include_router(analyze_area.router)
 
 
 @app.on_event("startup")
@@ -139,7 +145,7 @@ async def release_memory_after_request(request: Request, call_next):
     costs nothing a client waits on.
     """
     response = await call_next(request)
-    if request.url.path == "/analyzeContour":
+    if request.url.path in _ANALYSIS_PATHS:
         before = _rss_mb()
         gc.collect()
         if _malloc_trim is not None:

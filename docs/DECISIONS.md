@@ -213,3 +213,33 @@ Reducing the interpolation grid below 300×300, or subsampling the contour verti
 **Impact:** Measured peak falls from 538.8 MB to **496.6 MB**, fitting the cap with 15.4 MB to spare. Every published figure is unchanged and was re-verified exactly: catchment 4.353 ha, 457 cells matching 457 accumulation, 1,355 contour lines, a 53-point boundary, and the pond location identical to the last digit. `app.main` is untouched and remains the full application for local development and full-stack deployment.
 
 **Accepted risk:** 15.4 MB of headroom is thin, and the deployment host's first request pays an LLVM compilation cost this measurement does not capture. The deployment therefore also sets `MALLOC_ARENA_MAX=2` — glibc otherwise allocates per-thread arenas that inflate RSS without adding live data — and runs uvicorn under a restart loop, so that a memory kill costs one request rather than leaving the endpoint permanently down.
+
+---
+
+## D-013: Select a land area by drawing it on the map
+
+Date: 2026-09-27
+Status: Accepted
+
+**Context:** The final submission brief requires "an option to select the land area on a map" and "generation of results based on the selected land area", with the pond location, catchment area and expected water volume "overlaid and visualized on the map". The app offered two inputs, neither of which is a selected area: clicking a point (the backend analyzes a fixed ~6.6 km box around it, D-004) and uploading a KML survey. The water volume also appeared only in the results sheet, never on the map.
+
+**Decision:** Add polygon and rectangle drawing to the map (`@geoman-io/leaflet-geoman-free`, MIT, the maintained Leaflet drawing plugin) and a new endpoint, `POST /analyzeArea`, taking the drawn ring as `{"polygon": [[lon, lat], ...]}`. The drawn area is *where the pond may go*, not the whole analysis extent: elevation is fetched for the polygon's bbox padded by 25% of its span on each side (at least ~550 m), flow routing runs over that whole grid, and only the pond-site search is restricted to cells inside the polygon (`analyze_catchment(site_mask=...)`). Candidate sampling is laid over the mask's own extent, so a small area still gets a full spread of candidates. The response is `/analyzeContour`'s shape plus `selected_area` and `selected_area_hectares`, so the frontend renders all three input modes with one results component. The pond marker carries an always-visible label with the expected water volume (annual runoff, m³/yr) and the catchment size.
+
+**Rationale:** Water reaching a site comes from uphill land, which can lie outside whatever the user drew. Clipping the grid at the polygon edge would truncate those catchments and understate the runoff; restricting only the site keeps the answer inside the selected land while keeping the hydrology honest. Limits are enforced before any external call: at least 1 ha (the smallest catchment the siting targets, D-010) and at most 0.06° (~6.6 km) on either axis, the same extent the click flow analyzes. The upper bound is a memory limit: the padded grid is then about 324 × 324 cells, comparable to the 300 × 300 KML grid measured to fit the 512 MB container (D-012).
+
+**Impact:** No database is needed for this flow; the drawn shape itself is the cache key for the DEM (saving OpenTopography's 50-call/day quota on repeats) and for the computed catchment. Verified in Chrome against live services: a ~229 ha rectangle and a ~204 ha polygon near Bhilai each returned in ~28 s cold, with the pond inside the drawn area, a 4.8 ha catchment and ~16,183 m³/yr expected water volume shown on the map. Memory, measured through `app.analyze_only` on the largest allowed area (a 0.06° square, 324 × 324 grid): peak working set 305 MB, against 455 MB for the sample KML on the same machine (497 MB on the Linux host, D-012), so the new path has more headroom than the one already deployed. Found during the browser run: geoman reads Leaflet from the global `L`, which an ES-module import never sets, so the app rendered blank until `lib/leafletGlobal.ts` set it — something only a real browser could catch.
+
+---
+
+## D-014: Fall back to NASA POWER for rainfall, and fail fast on unreachable caches
+
+Date: 2026-09-27
+Status: Accepted
+
+**Context:** Two defects surfaced while verifying D-013 live. First, Open-Meteo answered every request with "Daily API request limit exceeded". Under D-011 that degrades rather than fails, but it removes the expected water volume, which the final brief lists as a required result. A demo, a load test or several graders sharing one lab IP can exhaust that quota. Second, with MinIO and Redis unreachable, each request spent ~70 s inside minio's default retry-with-backoff and ~4 s on Redis's default connect behaviour, against a 12 s live DEM fetch the cache exists to save.
+
+**Decision:** `services/rainfall_lookup.py` tries Open-Meteo (10-year ERA5 daily archive) first, then NASA POWER's climatology endpoint (20-year MERRA-2 monthly means, one light request, no key, named in the brief), and remembers a successful answer in process for six hours. POWER, as the last resort, gets a 10 s timeout and one retry: it answered in under a second on most requests but stalled past 40 s on two of them, and a stalled request left one live run with no volume at all. The response gains `rainfall_source` (`"open-meteo"`, `"nasa-power"`, or null), which the frontend shows. The MinIO client gets a 2 s connect / 10 s read timeout with no retries, and the Redis client a 0.5 s connect / 2 s socket timeout.
+
+**Rationale:** NASA POWER's resolution is coarser (~50 km against ~9–25 km), which is why it isn't the primary. For long-term average rainfall at this scale the two agree closely: 1,345 mm/yr (POWER) against 1,415 mm/yr (Open-Meteo) near Bhilai, about 5% apart. A coarser figure, labelled as such, is better than no volume. Caches are an optimization (D-005); one that can't answer in a couple of seconds should count as a miss.
+
+**Impact:** The drawn-area request fell from 86 s to ~28 s cold with MinIO and Redis down, and it returned a water volume while Open-Meteo was rate-limited. Figures previously published from Open-Meteo are unchanged whenever Open-Meteo answers.

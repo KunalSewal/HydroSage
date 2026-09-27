@@ -7,4 +7,9 @@ describe('IdleHint', () => {
     render(<IdleHint />)
     expect(screen.getByText(/click anywhere to find a pond site/i)).toBeInTheDocument()
   })
+
+  it('points to the draw-area tools', () => {
+    render(<IdleHint />)
+    expect(screen.getByText(/draw a land area/i)).toBeInTheDocument()
+  })
 })

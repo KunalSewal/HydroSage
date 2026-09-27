@@ -10,16 +10,22 @@ export type FocusBounds = [[number, number], [number, number]]
 // sixty times the area of the catchment it contains, so fitting to it leaves
 // the actual answer as a speck in the middle.
 //
+// A drawn area is framed together with the catchment: the user needs to see
+// the area they selected with the answer inside it, and a catchment can
+// reach beyond the drawn area uphill, so neither alone contains the other.
+//
 // Kept apart from MapView so the decision is testable without standing up
 // Leaflet in jsdom.
 export function resolveFocusBounds(
   catchmentBoundary: [number, number][] | null | undefined,
   sourceBbox: BoundingBox | null | undefined,
+  selectedArea?: [number, number][] | null,
 ): FocusBounds | null {
   if (catchmentBoundary && catchmentBoundary.length > 0) {
     // Rings arrive as [lon, lat] (GeoJSON order); Leaflet wants [lat, lng].
-    const lons = catchmentBoundary.map(([lon]) => lon)
-    const lats = catchmentBoundary.map(([, lat]) => lat)
+    const points = selectedArea ? [...catchmentBoundary, ...selectedArea] : catchmentBoundary
+    const lons = points.map(([lon]) => lon)
+    const lats = points.map(([, lat]) => lat)
     return [
       [Math.min(...lats), Math.min(...lons)],
       [Math.max(...lats), Math.max(...lons)],

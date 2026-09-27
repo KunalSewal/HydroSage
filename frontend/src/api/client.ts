@@ -62,6 +62,8 @@ export interface RecommendationFields {
   // analysis is computed from the survey alone and stays valid; only these
   // runoff-derived figures are lost. See backend docs/DECISIONS.md D-011.
   average_annual_rainfall_mm: number | null
+  // "open-meteo" or "nasa-power" (the fallback, D-014); null when both failed.
+  rainfall_source?: string | null
   runoff_volume_m3: number | null
   runoff_coefficient: number | null
   pond_options: PondOption[]
@@ -74,6 +76,13 @@ export interface CatchmentAnalysis extends CatchmentFields, RecommendationFields
   min_elevation: number
   max_elevation: number
   contours: Contour[]
+}
+
+// A land area drawn on the map (POST /analyzeArea): the same analysis, with
+// the pond sited inside the drawn polygon.
+export interface AreaAnalysis extends CatchmentAnalysis {
+  selected_area: [number, number][] // [lon, lat], as sent
+  selected_area_hectares: number
 }
 
 export interface Recommendation extends RecommendationFields {
@@ -152,4 +161,13 @@ export async function analyzeContourFile(file: File): Promise<CatchmentAnalysis>
 export async function getRecommendation(villageId: string): Promise<Recommendation> {
   const response = await fetch(`${API_BASE}/villages/${villageId}/recommend`, { method: 'POST' })
   return parseOrThrow<Recommendation>(response)
+}
+
+export async function analyzeArea(polygon: [number, number][]): Promise<AreaAnalysis> {
+  const response = await fetch(`${API_BASE}/analyzeArea`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ polygon }),
+  })
+  return parseOrThrow<AreaAnalysis>(response)
 }

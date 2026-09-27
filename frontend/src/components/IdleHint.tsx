@@ -13,6 +13,7 @@ export default function IdleHint() {
         className="mx-auto mb-3 h-3.5 w-3.5 rounded-full bg-hs-amber"
       />
       <p className="text-xs font-medium text-hs-cream/90">Click anywhere to find a pond site</p>
+      <p className="mt-0.5 text-[11px] text-hs-cream/70">or draw a land area with the tools above</p>
     </div>
   )
 }

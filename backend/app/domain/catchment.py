@@ -173,18 +173,42 @@ def _mask_to_boundary_ring(mask: np.ndarray, grid: Grid) -> list[list[float]]:
     return [[lon, lat] for lon, lat in lons_lats]
 
 
-def _sample_candidates(acc: np.ndarray, margin_rows: int, margin_cols: int) -> list[_Candidate]:
+def _sample_candidates(
+    acc: np.ndarray, margin_rows: int, margin_cols: int, site_mask: np.ndarray | None = None
+) -> list[_Candidate]:
+    """`site_mask`, when given, limits candidates to cells where it's True
+    -- a user-drawn area. The sampling grid is then laid over the mask's
+    own extent rather than the whole raster, so a small area still gets a
+    full spread of candidates instead of the few coarse whole-grid samples
+    that happen to land inside it."""
     height, width = acc.shape
-    row_step = max(1, (height - 2 * margin_rows) // CANDIDATE_GRID_DIVISIONS)
-    col_step = max(1, (width - 2 * margin_cols) // CANDIDATE_GRID_DIVISIONS)
+    row_lo, row_hi = margin_rows, height - margin_rows
+    col_lo, col_hi = margin_cols, width - margin_cols
+    allowed = None
+
+    if site_mask is not None:
+        allowed = np.zeros_like(site_mask, dtype=bool)
+        allowed[row_lo:row_hi, col_lo:col_hi] = site_mask[row_lo:row_hi, col_lo:col_hi]
+        rows, cols = np.nonzero(allowed)
+        if rows.size == 0:
+            return []
+        row_lo, row_hi = int(rows.min()), int(rows.max()) + 1
+        col_lo, col_hi = int(cols.min()), int(cols.max()) + 1
+        # Cells outside the mask can never win a window's argmax below.
+        acc = np.where(allowed, acc, -np.inf)
+
+    row_step = max(1, (row_hi - row_lo) // CANDIDATE_GRID_DIVISIONS)
+    col_step = max(1, (col_hi - col_lo) // CANDIDATE_GRID_DIVISIONS)
 
     candidates: list[_Candidate] = []
     seen: set[tuple[int, int]] = set()
-    for r in range(margin_rows, height - margin_rows, row_step):
-        for c in range(margin_cols, width - margin_cols, col_step):
-            r0, r1 = max(margin_rows, r - LOCAL_WINDOW_RADIUS), min(height - margin_rows, r + LOCAL_WINDOW_RADIUS + 1)
-            c0, c1 = max(margin_cols, c - LOCAL_WINDOW_RADIUS), min(width - margin_cols, c + LOCAL_WINDOW_RADIUS + 1)
+    for r in range(row_lo, row_hi, row_step):
+        for c in range(col_lo, col_hi, col_step):
+            r0, r1 = max(row_lo, r - LOCAL_WINDOW_RADIUS), min(row_hi, r + LOCAL_WINDOW_RADIUS + 1)
+            c0, c1 = max(col_lo, c - LOCAL_WINDOW_RADIUS), min(col_hi, c + LOCAL_WINDOW_RADIUS + 1)
             window = acc[r0:r1, c0:c1]
+            if allowed is not None and not np.isfinite(window).any():
+                continue  # this window lies entirely outside the drawn area
             local_row, local_col = np.unravel_index(np.argmax(window), window.shape)
             true_row, true_col = r0 + local_row, c0 + local_col
 
@@ -320,8 +344,16 @@ def _flood_fill_achievable_volume(
 
 
 def analyze_catchment(
-    elevation: np.ndarray, bbox: BoundingBox, valid_mask: np.ndarray | None = None
+    elevation: np.ndarray,
+    bbox: BoundingBox,
+    valid_mask: np.ndarray | None = None,
+    site_mask: np.ndarray | None = None,
 ) -> CatchmentResult:
+    """`site_mask`, when given, restricts where the pond may be sited (a
+    user-drawn area, see domain/area.py). Flow routing and the catchment
+    trace still run over the whole grid, since a catchment can reach
+    uphill beyond the drawn area. Raises ValueError if the mask leaves no
+    usable cell."""
     grid, dem = _build_grid(elevation, bbox)
 
     pit_filled = grid.fill_pits(dem)
@@ -352,7 +384,9 @@ def analyze_catchment(
         )
         return mask, float(mask.sum() * cell_area_m2)
 
-    candidates = _sample_candidates(acc, margin_rows, margin_cols)
+    candidates = _sample_candidates(acc, margin_rows, margin_cols, site_mask)
+    if not candidates and site_mask is not None:
+        raise ValueError("no usable pond site inside the selected area; try drawing a larger area")
     depression_mask = _find_depressions(elevation, margin_rows, margin_cols, valid_mask)
     candidates = [replace(c, is_depression=bool(depression_mask[c.row, c.col])) for c in candidates]
     candidate, catchment_mask, area_m2 = _select_pond_site(candidates, catchment_for)

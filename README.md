@@ -18,6 +18,19 @@ curl -X POST http://10.1.75.53:3265/analyzeContour \
   -F "contour_map=@contours_1m.kml"
 ```
 
+## Selecting a land area
+
+Draw a polygon or rectangle on the map (the two outline icons in the top bar) to analyze
+that land. The pond is sited inside the drawn area, and its location, catchment and
+expected water volume are drawn on the map. The same analysis is available as
+`POST /analyzeArea`:
+
+```bash
+curl -X POST http://localhost:8000/analyzeArea -H "Content-Type: application/json"   -d '{"polygon": [[81.270, 21.180], [81.284, 21.180], [81.284, 21.194], [81.270, 21.194]]}'
+```
+
+The area must be at least 1 ha and at most ~6.6 km on each side (see docs/DECISIONS.md D-013).
+
 ## Documentation
 
 - [docs/PHASE1_REPORT.md](docs/PHASE1_REPORT.md) — Phase 1 submission report
