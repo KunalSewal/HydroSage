@@ -230,9 +230,14 @@ class Gateway:
             try:
                 response = await self.client.get(backend.url + "/health", timeout=5.0)
                 ok = response.status_code == 200
-            except httpx.HTTPError as error:
+            except (httpx.ConnectError, httpx.ConnectTimeout) as error:
                 ok = False
                 backend.last_error = f"{type(error).__name__}: {error}"
+            except httpx.HTTPError:
+                # Connected but answered slowly: a backend mid-analysis is
+                # CPU-bound and can miss the timeout while perfectly alive.
+                # Busy is not down -- leave its state as it was.
+                return
             if ok and not backend.healthy:
                 logger.warning("backend %s is healthy again", backend.url)
             if ok:

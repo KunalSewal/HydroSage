@@ -230,3 +230,19 @@ def test_different_requests_still_spread_across_backends():
         assert servers == {"a", "b"}
 
     run(scenario())
+
+
+def test_a_slow_health_answer_does_not_mark_a_busy_backend_down():
+    # A backend mid-analysis is CPU-bound and can answer /health late. That
+    # is "busy", not "down": marking it down refused requests with 503 while
+    # the queue still had room (found by the single-instance load test).
+    async def scenario():
+        async def handler(request):
+            raise httpx.ReadTimeout("slow", request=request)
+
+        app = create_app(["http://a:3000"], upstream_transport=httpx.MockTransport(handler))
+        gateway = app.state.gateway
+        await gateway.check_health()
+        assert gateway.backends[0].healthy
+
+    run(scenario())
