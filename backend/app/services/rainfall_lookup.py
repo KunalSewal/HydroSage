@@ -13,12 +13,10 @@ copy after one lookup, and nothing is lost if it's empty.
 """
 
 import logging
-import threading
-import time
-from collections import OrderedDict
 from collections.abc import Callable
 from datetime import date
 
+from app.core.ttl_cache import TTLCache
 from app.domain.rainfall import RainfallSummary, summarize_climatology, summarize_rainfall
 from app.infrastructure.nasa_power_client import (
     CLIMATOLOGY_PERIOD_END,
@@ -33,13 +31,11 @@ RAINFALL_HISTORY_YEARS = 10
 CACHE_TTL_SECONDS = 6 * 3600
 CACHE_MAX_ENTRIES = 1024
 
-_cache: OrderedDict[tuple[float, float], tuple[float, RainfallSummary, str]] = OrderedDict()
-_cache_lock = threading.Lock()  # sync endpoints run in a thread pool
+_cache = TTLCache(ttl_seconds=CACHE_TTL_SECONDS, max_entries=CACHE_MAX_ENTRIES)
 
 
 def clear_cache() -> None:
-    with _cache_lock:
-        _cache.clear()
+    _cache.clear()
 
 
 def _cache_key(lat: float, lon: float) -> tuple[float, float]:
@@ -68,11 +64,9 @@ def get_rainfall_summary(
 ) -> tuple[RainfallSummary, str] | None:
     """(summary, source name), or None if every source failed."""
     key = _cache_key(lat, lon)
-    with _cache_lock:
-        cached = _cache.get(key)
-        if cached is not None and time.monotonic() - cached[0] < CACHE_TTL_SECONDS:
-            _cache.move_to_end(key)
-            return cached[1], cached[2]
+    cached = _cache.get(key)
+    if cached is not None:
+        return cached
 
     # POWER, as the last resort, gets a second attempt: it occasionally
     # stalls on a single request and answers the next one in under a second.
@@ -95,11 +89,7 @@ def get_rainfall_summary(
         if summary is None:
             continue
 
-        with _cache_lock:
-            _cache[key] = (time.monotonic(), summary, name)
-            _cache.move_to_end(key)
-            while len(_cache) > CACHE_MAX_ENTRIES:
-                _cache.popitem(last=False)
+        _cache.set(key, (summary, name))
         return summary, name
 
     return None

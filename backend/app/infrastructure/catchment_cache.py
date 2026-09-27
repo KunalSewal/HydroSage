@@ -18,6 +18,9 @@ requirement.
 
 import json
 import logging
+import threading
+import time
+from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import asdict
 
@@ -29,6 +32,42 @@ from app.domain.catchment import CatchmentResult
 logger = logging.getLogger(__name__)
 
 TTL_SECONDS = 3600
+IN_PROCESS_MAX_ENTRIES = 256
+
+
+class _InProcessStore:
+    """The two Redis calls CatchmentCache makes (get, set with ex=),
+    held in this process's memory. Stands in for Redis where none is
+    deployed; bounded, because the lab containers cap memory at 512 MB
+    and a result is a few kB."""
+
+    def __init__(self, max_entries: int = IN_PROCESS_MAX_ENTRIES) -> None:
+        self._entries: OrderedDict[str, tuple[float, str]] = OrderedDict()
+        self._max_entries = max_entries
+        self._lock = threading.Lock()  # sync endpoints run in a thread pool
+
+    def get(self, name: str) -> str | None:
+        with self._lock:
+            entry = self._entries.get(name)
+            if entry is None:
+                return None
+            expires_at, value = entry
+            if time.monotonic() >= expires_at:
+                del self._entries[name]
+                return None
+            self._entries.move_to_end(name)
+            return value
+
+    def set(self, name: str, value: str, ex: int) -> None:
+        with self._lock:
+            self._entries[name] = (time.monotonic() + ex, value)
+            self._entries.move_to_end(name)
+            while len(self._entries) > self._max_entries:
+                self._entries.popitem(last=False)
+
+
+# One per process, so the per-request CatchmentCache objects share it.
+_in_process_store = _InProcessStore()
 
 
 class CatchmentCache:
@@ -37,6 +76,8 @@ class CatchmentCache:
 
     @classmethod
     def from_settings(cls, settings: Settings) -> "CatchmentCache":
+        if not settings.redis_url:
+            return cls(_in_process_store)
         # Short timeouts for the same reason as dem_cache.py: an unreachable
         # Redis measured 4 s per lookup on the default settings, for a cache
         # whose whole purpose is saving time.

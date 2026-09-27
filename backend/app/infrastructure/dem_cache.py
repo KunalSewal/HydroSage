@@ -10,8 +10,11 @@ cache" rather than raising, so a cache outage never breaks the live DEM
 fetch it's sitting in front of.
 """
 
+import hashlib
 import logging
+import os
 from io import BytesIO
+from pathlib import Path
 
 import urllib3
 from minio import Minio
@@ -34,7 +37,9 @@ class DemCache:
         self._bucket = bucket
 
     @classmethod
-    def from_settings(cls, settings: Settings) -> "DemCache":
+    def from_settings(cls, settings: Settings) -> "DemCache | DiskDemCache":
+        if settings.dem_cache_dir:
+            return DiskDemCache(Path(settings.dem_cache_dir))
         client = Minio(
             settings.object_storage_endpoint,
             access_key=settings.object_storage_access_key,
@@ -80,3 +85,36 @@ class DemCache:
     @staticmethod
     def _object_name(cache_key: str, demtype: str) -> str:
         return f"dem/{cache_key}/{demtype}.tif"
+
+
+class DiskDemCache:
+    """The same interface as DemCache, backed by local files. For hosts with
+    no object store: each API instance keeps its own copy, which still
+    spends OpenTopography's daily quota at most once per area per instance.
+    Same contract as DemCache -- every failure is a miss, never an error."""
+
+    def __init__(self, directory: Path) -> None:
+        self._directory = directory
+
+    def get(self, cache_key: str, demtype: str) -> bytes | None:
+        try:
+            return self._path(cache_key, demtype).read_bytes()
+        except OSError:
+            return None
+
+    def put(self, cache_key: str, demtype: str, raw: bytes) -> None:
+        path = self._path(cache_key, demtype)
+        try:
+            self._directory.mkdir(parents=True, exist_ok=True)
+            # Write-then-rename, so a concurrent reader never sees half a file.
+            partial = path.with_suffix(f".{os.getpid()}.part")
+            partial.write_bytes(raw)
+            partial.replace(path)
+        except OSError:
+            logger.warning("disk DEM cache write failed for %s/%s", cache_key, demtype, exc_info=True)
+
+    def _path(self, cache_key: str, demtype: str) -> Path:
+        # Hashed, so no key -- however it's spelled -- can name a path
+        # outside the cache directory.
+        digest = hashlib.sha256(f"{cache_key}/{demtype}".encode()).hexdigest()
+        return self._directory / f"{digest}.tif"

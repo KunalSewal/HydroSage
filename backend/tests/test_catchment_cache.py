@@ -116,3 +116,42 @@ def test_round_trips_through_a_real_redis_instance():
 
     assert cache.get("test-village-real-redis") == _RESULT
     assert cache.get("a-village-never-written") is None
+
+
+# ---- in-process fallback: the no-Redis deployment ----
+
+
+def test_from_settings_without_redis_caches_in_process():
+    from app.core.config import Settings
+
+    settings = Settings(redis_url="")
+    first = CatchmentCache.from_settings(settings)
+    first.put("area-1", _RESULT)
+
+    # A fresh CatchmentCache per request (as the endpoints create them) must
+    # still see what an earlier request stored.
+    assert CatchmentCache.from_settings(settings).get("area-1") == _RESULT
+
+
+def test_in_process_fallback_evicts_the_oldest_entry_past_its_bound():
+    from app.infrastructure.catchment_cache import _InProcessStore
+
+    store = _InProcessStore(max_entries=2)
+    store.set("a", "1", ex=60)
+    store.set("b", "2", ex=60)
+    store.set("c", "3", ex=60)
+
+    assert store.get("a") is None
+    assert store.get("c") == "3"
+
+
+def test_in_process_fallback_expires_entries(monkeypatch):
+    from app.infrastructure import catchment_cache
+
+    now = [1000.0]
+    monkeypatch.setattr(catchment_cache.time, "monotonic", lambda: now[0])
+    store = catchment_cache._InProcessStore(max_entries=10)
+    store.set("a", "1", ex=60)
+    now[0] += 61
+
+    assert store.get("a") is None

@@ -131,3 +131,41 @@ def test_round_trips_through_a_real_minio_instance():
 
     assert cache.get("test-village-real-minio", "COP30") == b"real minio round trip"
     assert cache.get("test-village-real-minio", "a-demtype-never-written") is None
+
+
+# ---- DiskDemCache: the no-MinIO deployment (four 512 MB containers) ----
+
+
+def test_disk_cache_round_trips_bytes(tmp_path):
+    from app.infrastructure.dem_cache import DiskDemCache
+
+    cache = DiskDemCache(tmp_path)
+    cache.put("area-abc", "COP30", b"tiff-bytes")
+
+    assert cache.get("area-abc", "COP30") == b"tiff-bytes"
+
+
+def test_disk_cache_miss_returns_none(tmp_path):
+    from app.infrastructure.dem_cache import DiskDemCache
+
+    assert DiskDemCache(tmp_path).get("never-stored", "COP30") is None
+
+
+def test_disk_cache_rejects_keys_that_would_escape_its_directory(tmp_path):
+    from app.infrastructure.dem_cache import DiskDemCache
+
+    cache = DiskDemCache(tmp_path / "cache")
+    cache.put("../../outside", "COP30", b"x")
+
+    assert not (tmp_path / "outside").exists()
+    written = [path for path in tmp_path.rglob("*") if path.is_file()]
+    assert written and all(path.parent == tmp_path / "cache" for path in written)
+
+
+def test_from_settings_uses_disk_when_a_cache_dir_is_configured(tmp_path, monkeypatch):
+    from app.core.config import Settings
+    from app.infrastructure.dem_cache import DiskDemCache
+
+    settings = Settings(dem_cache_dir=str(tmp_path))
+
+    assert isinstance(DemCache.from_settings(settings), DiskDemCache)

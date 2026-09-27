@@ -19,6 +19,12 @@ class Settings(BaseSettings):
     object_storage_bucket: str = "hydrosage-rasters"
     object_storage_secure: bool = False
 
+    # When set, raw DEMs are cached as files in this directory instead of
+    # MinIO -- for deployments with no object store, such as the four
+    # 512 MB lab containers (docs/DEPLOYMENT.md). An empty redis_url
+    # likewise switches the catchment cache to an in-process store.
+    dem_cache_dir: str = ""
+
     elevation_api_base_url: str = "https://openzenith.cyopsys.com/api/elevation"
 
     opentopography_api_key: str = ""

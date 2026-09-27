@@ -19,6 +19,7 @@ endpoint's own inline client-then-domain-function calls).
 
 import logging
 
+from app.core.ttl_cache import TTLCache
 from app.domain.land_availability import estimate_available_land
 from app.domain.pond import capture_ratio, size_pond_options
 from app.domain.runoff import estimate_annual_runoff_volume
@@ -29,12 +30,22 @@ from app.services.rainfall_lookup import get_rainfall_summary
 
 logger = logging.getLogger(__name__)
 
+# Land use around an area changes on a scale of months; the Overpass
+# lookup costs ~3 s per request, most of a warm repeat's response time.
+# Only successful lookups are cached.
+_land_cache = TTLCache(ttl_seconds=6 * 3600, max_entries=512)
+
 
 def _get_available_land_hectares(bbox: BoundingBox) -> float | None:
     """Land availability comes from a public, best-effort community API
     (Overpass) that isn't always reliable -- it shouldn't be able to fail
     the whole recommendation over an availability check the brief itself
     treats as a "checked against" refinement, not the core deliverable."""
+    key = tuple(round(v, 5) for v in (bbox.min_lon, bbox.min_lat, bbox.max_lon, bbox.max_lat))
+    cached = _land_cache.get(key)
+    if cached is not None:
+        return cached
+
     land_use_client = LandUseClient()
     try:
         excluded = land_use_client.get_excluded_features(bbox)
@@ -43,7 +54,9 @@ def _get_available_land_hectares(bbox: BoundingBox) -> float | None:
         return None
     finally:
         land_use_client.close()
-    return estimate_available_land(bbox, excluded).available_area_m2
+    available_m2 = estimate_available_land(bbox, excluded).available_area_m2
+    _land_cache.set(key, available_m2)
+    return available_m2
 
 
 def compute_recommendation_fields(
