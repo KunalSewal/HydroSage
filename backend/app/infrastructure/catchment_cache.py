@@ -37,7 +37,10 @@ class CatchmentCache:
 
     @classmethod
     def from_settings(cls, settings: Settings) -> "CatchmentCache":
-        return cls(redis.Redis.from_url(settings.redis_url))
+        # Short timeouts for the same reason as dem_cache.py: an unreachable
+        # Redis measured 4 s per lookup on the default settings, for a cache
+        # whose whole purpose is saving time.
+        return cls(redis.Redis.from_url(settings.redis_url, socket_connect_timeout=0.5, socket_timeout=2))
 
     def get(self, village_id: str) -> CatchmentResult | None:
         try:

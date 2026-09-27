@@ -32,6 +32,10 @@ class RecommendationFieldsOut(BaseModel):
     # docs/DECISIONS.md D-011. pond_options are still returned, sized by
     # terrain capacity alone, with runoff_capture_ratio None.
     average_annual_rainfall_mm: float | None
+    # Which provider answered: "open-meteo" (10-year ERA5 daily archive) or
+    # "nasa-power" (20-year MERRA-2 climatology, the fallback -- D-014).
+    # None when both failed.
+    rainfall_source: str | None = None
     runoff_volume_m3: float | None
     runoff_coefficient: float | None
     pond_options: list[PondOptionOut]

@@ -13,11 +13,19 @@ fetch it's sitting in front of.
 import logging
 from io import BytesIO
 
+import urllib3
 from minio import Minio
 
 from app.core.config import Settings
 
 logger = logging.getLogger(__name__)
+
+# minio's default HTTP client retries a refused connection with backoff for
+# over a minute. Measured: 70 s added to every request while MinIO was down,
+# against a 12 s live DEM fetch it was meant to save. A cache that can't
+# answer in a couple of seconds should count as a miss.
+_CONNECT_TIMEOUT_S = 2.0
+_READ_TIMEOUT_S = 10.0
 
 
 class DemCache:
@@ -32,6 +40,10 @@ class DemCache:
             access_key=settings.object_storage_access_key,
             secret_key=settings.object_storage_secret_key,
             secure=settings.object_storage_secure,
+            http_client=urllib3.PoolManager(
+                timeout=urllib3.Timeout(connect=_CONNECT_TIMEOUT_S, read=_READ_TIMEOUT_S),
+                retries=urllib3.Retry(total=0),
+            ),
         )
         return cls(client, settings.object_storage_bucket)
 

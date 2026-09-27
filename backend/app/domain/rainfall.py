@@ -37,3 +37,27 @@ def summarize_rainfall(daily: list[DailyRainfall]) -> RainfallSummary:
         average_annual_mm=sum(monthly_average_mm),
         monthly_average_mm=monthly_average_mm,
     )
+
+
+# Mean days per month, with February averaged over leap years, so a
+# climatology's mm/day rates convert to the same mean-month totals that
+# summarize_rainfall produces from daily records.
+_MEAN_DAYS_IN_MONTH = [31, 28.25, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+
+
+def summarize_climatology(
+    monthly_mm_per_day: list[float], period_start: str, period_end: str
+) -> RainfallSummary:
+    """The same summary as summarize_rainfall, from long-term monthly mean
+    rates (mm/day) instead of daily records -- the shape NASA POWER's
+    climatology endpoint returns."""
+    if len(monthly_mm_per_day) != 12:
+        raise ValueError("expected 12 monthly values, Jan..Dec")
+
+    monthly_average_mm = [rate * days for rate, days in zip(monthly_mm_per_day, _MEAN_DAYS_IN_MONTH)]
+    return RainfallSummary(
+        period_start=period_start,
+        period_end=period_end,
+        average_annual_mm=sum(monthly_average_mm),
+        monthly_average_mm=monthly_average_mm,
+    )

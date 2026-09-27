@@ -52,3 +52,26 @@ def test_summarize_rainfall_treats_missing_values_as_zero():
 def test_summarize_rainfall_rejects_an_empty_series():
     with pytest.raises(ValueError):
         summarize_rainfall([])
+
+
+# ---- summarize_climatology: NASA POWER's mm/day monthly means ----
+
+
+def test_summarize_climatology_converts_daily_rates_to_monthly_totals():
+    from app.domain.rainfall import summarize_climatology
+
+    rates = [1.0] * 12  # 1 mm/day, every month
+
+    summary = summarize_climatology(rates, period_start="2001-01-01", period_end="2020-12-31")
+
+    assert summary.monthly_average_mm[0] == pytest.approx(31.0)  # January
+    assert summary.monthly_average_mm[1] == pytest.approx(28.25)  # February, leap years averaged in
+    assert summary.average_annual_mm == pytest.approx(365.25)
+    assert summary.period_start == "2001-01-01"
+
+
+def test_summarize_climatology_rejects_anything_but_twelve_months():
+    from app.domain.rainfall import summarize_climatology
+
+    with pytest.raises(ValueError):
+        summarize_climatology([1.0] * 11, period_start="2001-01-01", period_end="2020-12-31")

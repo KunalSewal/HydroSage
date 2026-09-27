@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     nominatim_user_agent: str = "HydroSage/0.1 (student project, IIT Bhilai)"
 
     open_meteo_base_url: str = "https://archive-api.open-meteo.com"
+    nasa_power_base_url: str = "https://power.larc.nasa.gov"
 
     overpass_base_url: str = "https://overpass-api.de"
 

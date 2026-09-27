@@ -7,7 +7,7 @@ KML-upload POST /analyzeContour (the uploaded survey's own bbox centroid
 
 Deliberately its own layer, distinct from app/domain/ (pure calculation,
 no I/O -- see docs/ARCHITECTURE.md) and app/api/ (HTTP concerns only, no
-business logic). This function does real I/O (RainfallClient,
+business logic). This function does real I/O (rainfall lookup,
 LandUseClient) orchestrating multiple domain functions, which is neither
 -- a thin "use case" layer. Each piece it calls is independently
 unit-tested (domain/rainfall.py, domain/runoff.py, domain/pond.py,
@@ -18,20 +18,16 @@ endpoint's own inline client-then-domain-function calls).
 """
 
 import logging
-from datetime import date
 
 from app.domain.land_availability import estimate_available_land
 from app.domain.pond import capture_ratio, size_pond_options
-from app.domain.rainfall import summarize_rainfall
 from app.domain.runoff import estimate_annual_runoff_volume
 from app.infrastructure.elevation_client import BoundingBox
 from app.infrastructure.land_use_client import LandUseClient
-from app.infrastructure.rainfall_client import RainfallClient
 from app.schemas.recommend import PondOptionOut, RecommendationFieldsOut
+from app.services.rainfall_lookup import get_rainfall_summary
 
 logger = logging.getLogger(__name__)
-
-RAINFALL_HISTORY_YEARS = 10
 
 
 def _get_available_land_hectares(bbox: BoundingBox) -> float | None:
@@ -57,20 +53,8 @@ def compute_recommendation_fields(
     catchment_area_m2: float,
     achievable_volume_m3_by_depth: dict[float, float],
 ) -> RecommendationFieldsOut:
-    end_year = date.today().year - 1
-    start = date(end_year - RAINFALL_HISTORY_YEARS + 1, 1, 1)
-    end = date(end_year, 12, 31)
-
-    rainfall_client = RainfallClient()
-    try:
-        daily = rainfall_client.get_daily_rainfall(lat, lon, start, end)
-    except Exception:  # noqa: BLE001 -- see _get_rainfall_summary's reasoning below
-        logger.warning("rainfall lookup failed; reporting terrain capacity without a runoff bound", exc_info=True)
-        rainfall = None
-    else:
-        rainfall = summarize_rainfall(daily)
-    finally:
-        rainfall_client.close()
+    looked_up = get_rainfall_summary(lat, lon)
+    rainfall, rainfall_source = looked_up if looked_up is not None else (None, None)
 
     # A rainfall outage must not fail the request. The catchment analysis is
     # derived entirely from the uploaded survey and stays valid without it;
@@ -91,6 +75,7 @@ def compute_recommendation_fields(
 
     return RecommendationFieldsOut(
         average_annual_rainfall_mm=rainfall.average_annual_mm if rainfall is not None else None,
+        rainfall_source=rainfall_source,
         runoff_volume_m3=runoff_volume_m3,
         runoff_coefficient=runoff.runoff_coefficient if runoff is not None else None,
         pond_options=[
