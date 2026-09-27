@@ -15,6 +15,12 @@ import { useContourUpload } from './hooks/useContourUpload'
 import { useGeolocation } from './hooks/useGeolocation'
 import { useSiteSelection } from './hooks/useSiteSelection'
 import { pondLabel } from './lib/mapLabels'
+import { squareAround } from './lib/squareArea'
+
+// Set at build time for deployments without the database the village-based
+// click flow needs (the four lab containers, docs/DEPLOYMENT.md): a click
+// or a search result then analyzes a square around that point instead.
+const CLICK_ANALYZES_AREA = import.meta.env.VITE_CLICK_ANALYZES_AREA === 'true'
 
 function App() {
   const { position, status: geoStatus, locate, requestId: geoRequestId } = useGeolocation()
@@ -76,6 +82,16 @@ function App() {
     upload(file)
   }
 
+  function handlePointChosen(lat: number, lon: number) {
+    if (CLICK_ANALYZES_AREA) {
+      resetUpload()
+      analyzeArea(squareAround(lat, lon))
+      return
+    }
+    resetArea()
+    selectPoint(lat, lon)
+  }
+
   function handleDrawClick(shape: DrawShape) {
     setDrawRequest((previous) => ({ shape, nonce: (previous?.nonce ?? 0) + 1 }))
   }
@@ -103,7 +119,7 @@ function App() {
         center={position}
         markerPosition={markerPosition}
         contours={contours}
-        onMapClick={isClickMode ? selectPoint : () => {}}
+        onMapClick={isClickMode || (isAreaMode && CLICK_ANALYZES_AREA) ? handlePointChosen : () => {}}
         catchmentBoundary={catchmentBoundary}
         pondLocation={pondLocation}
         fitBoundsTo={fitBoundsTo}
@@ -120,10 +136,7 @@ function App() {
       </div>
 
       <TopBar
-        onResultSelected={(lat, lon) => {
-          resetArea()
-          selectPoint(lat, lon)
-        }}
+        onResultSelected={handlePointChosen}
         onUploadClick={() => setIsDropZoneOpen(true)}
         onDrawClick={handleDrawClick}
       />

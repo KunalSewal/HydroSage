@@ -1,6 +1,7 @@
 """A deployment entrypoint carrying only the analysis routes:
 POST /analyzeContour (uploaded KML) and POST /analyzeArea (a land area drawn
-on the map, D-013). Neither needs a database.
+on the map, D-013), plus GET /geocode for the map's place search. None of
+them needs a database.
 
 `app.main` mounts all seven routers, which transitively imports SQLAlchemy,
 GeoAlchemy2, Celery and MinIO -- roughly 19 MB of resident memory for
@@ -28,8 +29,10 @@ import signal
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
-from app.api import analyze_area, analyze_contour
+from app.api import analyze_area, analyze_contour, geocode
+from app.core.analysis_gate import AnalysisGate
 from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -93,6 +96,14 @@ _ANALYSIS_PATHS = {"/analyzeContour", "/analyzeArea"}
 # OOM-killed.
 _RECYCLE_ABOVE_MB = float(os.environ.get("RECYCLE_ABOVE_MB", "335"))
 
+# One analysis at a time in this process (see app/core/analysis_gate.py);
+# a few more may wait briefly, the rest are refused with 503.
+_gate = AnalysisGate(
+    limit=int(os.environ.get("MAX_CONCURRENT_ANALYSES", "1")),
+    max_waiting=int(os.environ.get("MAX_WAITING_ANALYSES", "4")),
+)
+_GATE_WAIT_SECONDS = float(os.environ.get("ANALYSIS_WAIT_SECONDS", "60"))
+
 
 def _rss_mb() -> float | None:
     """Resident set size in MB, read from /proc. None off Linux."""
@@ -120,6 +131,7 @@ app.add_middleware(
 
 app.include_router(analyze_contour.router)
 app.include_router(analyze_area.router)
+app.include_router(geocode.router)
 
 
 @app.on_event("startup")
@@ -135,6 +147,25 @@ async def _log_memory_configuration() -> None:
     )
 
 
+def _reclaim_memory() -> float | None:
+    """Frees what the finished analysis left behind; returns resident MB
+    afterwards (None off Linux)."""
+    before = _rss_mb()
+    gc.collect()
+    if _malloc_trim is not None:
+        try:
+            _malloc_trim(0)
+        except Exception:  # noqa: BLE001 -- reclaiming memory must never fail a served response
+            logger.warning("malloc_trim failed; continuing", exc_info=True)
+    after = _rss_mb()
+    if before is not None and after is not None:
+        # Logged at WARNING so it survives uvicorn's default level: this is
+        # the only visibility into memory on a host where the container is
+        # capped at 512 MB and an overrun is a SIGKILL with no traceback.
+        logger.warning("memory: %.0f MB -> %.0f MB after reclaim (cap 512 MB)", before, after)
+    return after
+
+
 @app.middleware("http")
 async def release_memory_after_request(request: Request, call_next):
     """Returns the request's freed heap to the OS before the next one starts.
@@ -143,43 +174,49 @@ async def release_memory_after_request(request: Request, call_next):
     the third consecutive request exceeds the container's memory limit even
     though the first two fit. Runs after the response is produced, so it
     costs nothing a client waits on.
-    """
-    response = await call_next(request)
-    if request.url.path in _ANALYSIS_PATHS:
-        before = _rss_mb()
-        gc.collect()
-        if _malloc_trim is not None:
-            try:
-                _malloc_trim(0)
-            except Exception:  # noqa: BLE001 -- reclaiming memory must never fail a served response
-                logger.warning("malloc_trim failed; continuing", exc_info=True)
-        after = _rss_mb()
-        if before is not None and after is not None:
-            # Logged at WARNING so it survives uvicorn's default level: this is
-            # the only visibility into memory on a host where the container is
-            # capped at 512 MB and an overrun is a SIGKILL with no traceback.
-            logger.warning("memory: %.0f MB -> %.0f MB after reclaim (cap 512 MB)", before, after)
 
-        if after is not None and after > _RECYCLE_ABOVE_MB:
-            # An analysis needs roughly 170 MB of transient headroom. Once the
-            # resident floor is high enough that the *next* request would not
-            # fit, restarting now is strictly better than being SIGKILLed
-            # mid-request later: this response has already been produced and
-            # sent, so nothing in flight is lost, whereas an OOM kill during a
-            # request loses that caller's answer entirely.
-            #
-            # The supervising loop restarts the server (see the deployment
-            # command in docs/PHASE1_REPORT.md). SIGTERM rather than os._exit
-            # so uvicorn closes its listening socket and finishes the response.
-            logger.warning(
-                "resident %.0f MB exceeds the %.0f MB recycle threshold; restarting to reclaim",
-                after,
-                _RECYCLE_ABOVE_MB,
-            )
-            os.kill(os.getpid(), signal.SIGTERM)
+    Analyses also pass through the gate first, so this process never runs
+    two at once.
+    """
+    if request.url.path not in _ANALYSIS_PATHS:
+        return await call_next(request)
+
+    if not await _gate.acquire(timeout=_GATE_WAIT_SECONDS):
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "server is busy with other analyses; please retry shortly"},
+            headers={"Retry-After": "10"},
+        )
+    try:
+        response = await call_next(request)
+        # Reclaim before releasing the gate, so the next queued analysis
+        # starts from the lowered floor rather than racing the cleanup.
+        after = _reclaim_memory()
+    finally:
+        _gate.release()
+
+    if after is not None and after > _RECYCLE_ABOVE_MB:
+        # An analysis needs roughly 170 MB of transient headroom. Once the
+        # resident floor is high enough that the *next* request would not
+        # fit, restarting now is strictly better than being SIGKILLed
+        # mid-request later: this response has already been produced and
+        # sent, so nothing in flight is lost, whereas an OOM kill during a
+        # request loses that caller's answer entirely.
+        #
+        # The supervising loop restarts the server (see the deployment
+        # command in docs/PHASE1_REPORT.md). SIGTERM rather than os._exit
+        # so uvicorn closes its listening socket and finishes the response.
+        logger.warning(
+            "resident %.0f MB exceeds the %.0f MB recycle threshold; restarting to reclaim",
+            after,
+            _RECYCLE_ABOVE_MB,
+        )
+        os.kill(os.getpid(), signal.SIGTERM)
     return response
 
 
 @app.get("/health", tags=["health"])
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+def health() -> dict[str, str | int]:
+    # in_flight/waiting let a load balancer (app/gateway.py) and an operator
+    # see this instance's load, not just that it's up.
+    return {"status": "ok", "in_flight": _gate.in_flight, "waiting": _gate.waiting}

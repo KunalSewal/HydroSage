@@ -79,6 +79,10 @@ Resolved by D-001 (2026-08-25): keep infrastructure with a concrete technical re
 | Added `app/services/` as a new module tier | Two endpoints needed the same rainfall/runoff/pond/land orchestration; neither `domain/` (has I/O) nor `api/` (shared business logic, not HTTP concern) fit | 2026-08-30 |
 | Catchment site selection rewritten | The original "single global flow-accumulation maximum" approach claimed 20-36% of any analyzed area regardless of input; rewritten to search for a realistically-scaled site instead | 2026-08-30 |
 
+## Deployment topology
+
+The final deployment runs on four 512 MB containers with no database, Redis or MinIO: a gateway (`app/gateway.py`) serving the frontend and load-balancing across `app/analyze_only.py` instances, each limited to one analysis at a time (`app/core/analysis_gate.py`). Caches fall back to disk and memory. See `docs/DEPLOYMENT.md` and D-015. `docker-compose.yml` remains the full stack for local development.
+
 ## External API surface
 
 Originally built entirely against OpenZenith (project description named it as the elevation source, and it turned out to cover far more — see D-003). Moved off it per D-005 after it proved flaky in practice — replaced with individually well-established, single-purpose services:

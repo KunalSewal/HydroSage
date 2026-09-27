@@ -34,6 +34,7 @@ The area must be at least 1 ha and at most ~6.6 km on each side (see docs/DECISI
 ## Documentation
 
 - [docs/PHASE1_REPORT.md](docs/PHASE1_REPORT.md) — Phase 1 submission report
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — deploying on the four lab containers, and load testing
 - [docs/PROJECT_BRIEF.md](docs/PROJECT_BRIEF.md) — product requirements
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — architecture and design rationale
 - [docs/DECISIONS.md](docs/DECISIONS.md) — decision log
