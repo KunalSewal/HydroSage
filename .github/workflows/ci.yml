@@ -57,15 +57,9 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
         working-directory: frontend
-      - name: Build for the gateway
+      - name: Build for the gateway (settings in frontend/.env.deploy)
         working-directory: frontend
-        env:
-          # Empty: the gateway serves this bundle and the API from one
-          # origin, so API calls are relative and need no CORS.
-          VITE_API_BASE_URL: ""
-          # No database in this deployment; a click analyzes a square area.
-          VITE_CLICK_ANALYZES_AREA: "true"
-        run: npx vite build --outDir ../frontend-dist --emptyOutDir
+        run: npx vite build --mode deploy --outDir ../frontend-dist --emptyOutDir
       - name: Publish to the frontend-dist branch
         working-directory: frontend-dist
         run: |

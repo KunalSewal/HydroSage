@@ -48,4 +48,31 @@ describe('SearchBox', () => {
 
     expect(client.searchPlaces).not.toHaveBeenCalled()
   })
+
+  it('closes the results list on Escape', async () => {
+    vi.mocked(client.searchPlaces).mockResolvedValue([{ display_name: 'Bhilai, Chhattisgarh', lat: 21.19, lon: 81.3 }])
+    render(<SearchBox onResultSelected={vi.fn()} />)
+
+    await userEvent.type(screen.getByPlaceholderText(/search a place/i), 'Bhilai{Enter}')
+    await screen.findByText('Bhilai, Chhattisgarh')
+    await userEvent.keyboard('{Escape}')
+
+    expect(screen.queryByText('Bhilai, Chhattisgarh')).not.toBeInTheDocument()
+  })
+
+  it('closes the results list when the user clicks elsewhere', async () => {
+    vi.mocked(client.searchPlaces).mockResolvedValue([{ display_name: 'Bhilai, Chhattisgarh', lat: 21.19, lon: 81.3 }])
+    render(
+      <div>
+        <SearchBox onResultSelected={vi.fn()} />
+        <button type="button">elsewhere</button>
+      </div>,
+    )
+
+    await userEvent.type(screen.getByPlaceholderText(/search a place/i), 'Bhilai{Enter}')
+    await screen.findByText('Bhilai, Chhattisgarh')
+    await userEvent.click(screen.getByText('elsewhere'))
+
+    expect(screen.queryByText('Bhilai, Chhattisgarh')).not.toBeInTheDocument()
+  })
 })

@@ -5,6 +5,7 @@ CLAUDE.md
 .env
 .env.*
 !.env.example
+!frontend/.env.deploy
 *.local
 
 # Private source documents (project description / HLD PDFs and similar)
@@ -30,3 +31,6 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+
+# deploy/demo_local.ps1's build, logs and process ids
+.demo/

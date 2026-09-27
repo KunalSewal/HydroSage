@@ -1,5 +1,5 @@
 import { Loader2, Search } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { searchPlaces } from '../api/client'
 
 interface SearchBoxProps {
@@ -13,6 +13,30 @@ export default function SearchBox({ onResultSelected }: SearchBoxProps) {
   const [results, setResults] = useState<{ display_name: string; lat: number; lon: number }[]>([])
   const [status, setStatus] = useState<Status>('idle')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const isOpen = results.length > 0
+
+  // The results list otherwise stays open over the map after the user has
+  // moved on (e.g. to drawing an area). Closes on Escape or on any press
+  // outside the search box; listeners exist only while the list is open.
+  useEffect(() => {
+    if (!isOpen) return
+    function close() {
+      setResults([])
+    }
+    function handlePointerDown(event: PointerEvent) {
+      if (!containerRef.current?.contains(event.target as Node)) close()
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') close()
+    }
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [isOpen])
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault()
@@ -31,7 +55,7 @@ export default function SearchBox({ onResultSelected }: SearchBoxProps) {
   }
 
   return (
-    <div className="relative w-full">
+    <div ref={containerRef} className="relative w-full">
       <form onSubmit={handleSubmit} className="flex items-center gap-2">
         {status === 'searching' ? (
           <Loader2 className="h-4 w-4 shrink-0 animate-spin text-hs-muted" />
@@ -45,7 +69,7 @@ export default function SearchBox({ onResultSelected }: SearchBoxProps) {
           className="w-full bg-transparent text-sm outline-none placeholder:text-hs-muted"
         />
       </form>
-      {results.length > 0 && (
+      {isOpen && (
         <ul className="absolute left-0 right-0 top-full z-10 mt-2 rounded-md bg-hs-panel/95 text-sm text-hs-cream shadow-lg">
           {results.map((result) => (
             <li key={`${result.lat}-${result.lon}`}>

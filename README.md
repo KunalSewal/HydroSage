@@ -18,6 +18,20 @@ curl -X POST http://10.1.75.53:3265/analyzeContour \
   -F "contour_map=@contours_1m.kml"
 ```
 
+## Run it locally (Windows, no Docker)
+
+Runs the same setup as the lab deployment — two analysis instances behind the
+load-balancing gateway, which serves the website — on this machine:
+
+```powershell
+.\deploy\demo_local.ps1          # first run installs and builds; opens http://localhost:8080
+.\deploy\demo_local.ps1 -Stop    # stop it
+```
+
+Needs Python 3.12, Node 20+, and `OPENTOPOGRAPHY_API_KEY` in `backend/.env`.
+Clicking the map analyzes a ~2.2 km square around the point; the top-bar
+icons draw a polygon or rectangle, or upload a KML survey.
+
 ## Selecting a land area
 
 Draw a polygon or rectangle on the map (the two outline icons in the top bar) to analyze
