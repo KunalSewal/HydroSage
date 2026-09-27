@@ -50,7 +50,7 @@ def test_generate_contours_auto_picks_an_interval_without_one_given():
     contours = generate_contours(elevation, bbox)
 
     levels = {c["elevation"] for c in contours}
-    assert 3 <= len(levels) <= 15  # a readable number of bands, not 1 and not 100
+    assert 10 <= len(levels) <= 30  # ~20 readable bands, not 1 and not 100
 
 
 def test_smooth_knocks_down_a_single_pixel_spike():
@@ -86,10 +86,11 @@ def test_generate_contours_is_not_derailed_by_pixel_noise():
 @pytest.mark.parametrize(
     "z_min,z_max,expected",
     [
-        (0, 100, 20),  # span 100 over ~8 target levels -> round to 20
-        (0, 10, 2),  # span 10 -> round to 2
-        (267, 298, 5),  # real sample KML's elevation range -> round to 5
-        (0, 1, 0.2),  # near-flat span -> still a sane sub-metre interval
+        (0, 100, 5),  # span 100 over ~20 target levels -> round to 5
+        (267, 298, 2),  # real sample KML's elevation range -> round to 2
+        (277.3, 304.0, 2),  # flat Bhilai plain around a drawn area -> 2, not 5
+        (0, 10, 1),  # 0.5 would be finer than a 30 m DEM can resolve -> 1 m floor
+        (0, 1, 1),  # near-flat span -> the 1 m floor, not a sub-metre interval
     ],
 )
 def test_nice_interval_picks_round_numbers(z_min, z_max, expected):

@@ -9,7 +9,14 @@ from skimage import measure
 
 from app.infrastructure.elevation_client import BoundingBox
 
-_TARGET_LEVEL_COUNT = 8
+# ~20 levels across the analysed extent. This was 8, which on the flat
+# Bhilai/Durg plain (~27 m of relief around a drawn area) gave a 5 m
+# interval, and only one or two of those lines crossed the area the user
+# actually drew -- the map looked as if it had almost no contours.
+_TARGET_LEVEL_COUNT = 20
+# The DEM is Copernicus GLO-30: 30 m cells with a few metres of vertical
+# error, so contours closer than 1 m would be tracing noise, not terrain.
+_MIN_INTERVAL_M = 1.0
 _NICE_MULTIPLES = (1, 2, 5, 10)
 _SMOOTHING_SIGMA = 1.2
 
@@ -29,8 +36,8 @@ def _nice_interval(z_min: float, z_max: float, target_levels: int = _TARGET_LEVE
     either cluttered (steep terrain) or empty (flat terrain)."""
     span = z_max - z_min
     if span <= 0:
-        return 1.0
-    raw_step = span / target_levels
+        return _MIN_INTERVAL_M
+    raw_step = max(span / target_levels, _MIN_INTERVAL_M)
     magnitude = 10 ** math.floor(math.log10(raw_step))
     for multiple in _NICE_MULTIPLES:
         step = multiple * magnitude
