@@ -12,6 +12,7 @@ D-014.
 import httpx
 
 from app.core.config import get_settings
+from app.infrastructure.http import shared_ssl_context
 
 MONTH_KEYS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
 FILL_VALUE = -999.0
@@ -32,7 +33,11 @@ class NasaPowerClient:
         # takes under a second, and the caller retries once (see
         # services/rainfall_lookup.py), so waiting 30 s on a stalled request
         # only delays that retry.
-        self._client = client or httpx.Client(base_url=settings.nasa_power_base_url, timeout=POWER_TIMEOUT_S)
+        self._client = client or httpx.Client(
+            base_url=settings.nasa_power_base_url,
+            timeout=POWER_TIMEOUT_S,
+            verify=shared_ssl_context(),
+        )
 
     def get_monthly_precipitation_rates(self, lat: float, lon: float) -> list[float]:
         """Mean precipitation for each month, Jan..Dec, in mm/day."""

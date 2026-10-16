@@ -11,6 +11,7 @@ OPENTOPOGRAPHY_API_KEY in backend\.env. Logs go to .demo\*.log.
 
 .EXAMPLE
 .\deploy\demo_local.ps1              # set up if needed, start, open the browser
+.\deploy\demo_local.ps1 -Telemetry   # also export OpenTelemetry data to Grafana (needs Docker)
 .\deploy\demo_local.ps1 -SkipSetup   # start without reinstalling or rebuilding
 .\deploy\demo_local.ps1 -Stop        # stop everything this script started
 #>
@@ -18,6 +19,9 @@ param(
     [switch]$Stop,
     [switch]$SkipSetup,
     [switch]$NoBrowser,
+    # Export traces, metrics and logs over OTLP to the grafana/otel-lgtm
+    # container (deploy/observability), started here if needed. D-016.
+    [switch]$Telemetry,
     [int]$Port = 8080,
     [int[]]$ApiPorts = @(8101, 8102)
 )
@@ -92,21 +96,50 @@ if (-not (Test-Path (Join-Path $web 'index.html'))) {
     throw "No built site in $web; run once without -SkipSetup."
 }
 
-# Settings go through uvicorn's --env-file rather than $env: because two of
+if ($Telemetry) {
+    Write-Host 'Starting the observability stack (Grafana, Tempo, Prometheus, Loki)...'
+    & docker compose -f (Join-Path $root 'deploy\observability\docker-compose.yml') up -d 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'could not start deploy\observability; is Docker Desktop running?' }
+    $deadline = (Get-Date).AddSeconds(120)
+    while ((Get-Date) -lt $deadline) {
+        try { if ((Invoke-RestMethod 'http://127.0.0.1:3000/api/health' -TimeoutSec 3).database -eq 'ok') { break } } catch { }
+        Start-Sleep -Seconds 2
+    }
+    # Load (or refresh) the HydroSage dashboard; the container keeps no state.
+    $dashboard = Get-Content -Raw (Join-Path $root 'deploy\observability\hydrosage-dashboard.json') | ConvertFrom-Json
+    $body = @{ dashboard = $dashboard; overwrite = $true } | ConvertTo-Json -Depth 30
+    try {
+        Invoke-RestMethod 'http://127.0.0.1:3000/api/dashboards/db' -Method Post -ContentType 'application/json' `
+            -Body ([System.Text.Encoding]::UTF8.GetBytes($body)) | Out-Null
+    } catch { Write-Warning "Could not load the HydroSage dashboard into Grafana: $_" }
+}
+
+# Settings go through uvicorn's --env-file rather than $env: because some of
 # them are deliberately empty, and Windows PowerShell deletes a variable that
 # is set to an empty string. backend\.env (with the API key) is still read.
-$apiEnv = Join-Path $demo 'api.env'
-@(
+$apiSettings = @(
     'REDIS_URL='                                       # no Redis: in-process catchment cache
     "DEM_CACHE_DIR=$(Join-Path $demo 'dem-cache')"     # no MinIO: elevation cached on disk
     'CORS_ALLOWED_ORIGINS='                            # same origin through the gateway
-) | Set-Content -Encoding ascii $apiEnv
-
-$gatewayEnv = Join-Path $demo 'gateway.env'
-@(
+)
+$gatewaySettings = @(
     "GATEWAY_BACKENDS=$(($ApiPorts | ForEach-Object { "http://127.0.0.1:$_" }) -join ',')"
     "GATEWAY_STATIC_DIR=$web"
-) | Set-Content -Encoding ascii $gatewayEnv
+)
+
+# One env file per process, so each gets its own OpenTelemetry identity:
+# service.name says what it is, service.instance.id which one.
+function Write-EnvFile([string]$name, [string[]]$settings, [string]$service) {
+    $lines = @($settings)
+    if ($Telemetry) {
+        $lines += 'OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318'
+        $lines += "OTEL_SERVICE_NAME=$service"
+        $lines += "OTEL_SERVICE_INSTANCE_ID=$name"
+    }
+    $path = Join-Path $demo "$name.env"
+    $lines | Set-Content -Encoding ascii $path
+    return $path
+}
 
 function Start-Uvicorn([string]$name, [string]$module, [int]$p, [string]$envFile) {
     $uvicornArgs = @('-m', 'uvicorn', $module, '--host', '127.0.0.1', '--port', "$p", '--env-file', "`"$envFile`"")
@@ -120,10 +153,10 @@ function Start-Uvicorn([string]$name, [string]$module, [int]$p, [string]$envFile
 Write-Host 'Starting two analysis instances and the gateway...'
 $i = 1
 foreach ($p in $ApiPorts) {
-    Start-Uvicorn "api$i" 'app.analyze_only:app' $p $apiEnv
+    Start-Uvicorn "api$i" 'app.analyze_only:app' $p (Write-EnvFile "api$i" $apiSettings 'hydrosage-api')
     $i++
 }
-Start-Uvicorn 'gateway' 'app.gateway:app' $Port $gatewayEnv
+Start-Uvicorn 'gateway' 'app.gateway:app' $Port (Write-EnvFile 'gateway' $gatewaySettings 'hydrosage-gateway')
 
 # The analysis instances take ~15-20 s to import the geospatial libraries.
 $deadline = (Get-Date).AddSeconds(90)
@@ -149,5 +182,8 @@ Write-Host ''
 Write-Host "HydroSage is running at $url" -ForegroundColor Green
 Write-Host "  Fleet status: $url/gateway/status"
 Write-Host "  API docs:     $url/docs"
+if ($Telemetry) {
+    Write-Host "  Telemetry:    http://localhost:3000/d/hydrosage  (Grafana; Explore -> Tempo / Prometheus / Loki)"
+}
 Write-Host "  Stop it with: .\deploy\demo_local.ps1 -Stop"
 if (-not $NoBrowser) { Start-Process $url }

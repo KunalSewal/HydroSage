@@ -246,3 +246,49 @@ def test_a_slow_health_answer_does_not_mark_a_busy_backend_down():
         assert gateway.backends[0].healthy
 
     run(scenario())
+
+
+def test_a_connection_dropped_mid_request_is_retried_without_marking_the_backend_down():
+    # Found from traces during a load test: a pooled keep-alive connection
+    # closed by the server just as the gateway reused it (ReadError) became
+    # a 502, and a perfectly healthy instance was marked down.
+    async def scenario():
+        calls = {"n": 0}
+
+        async def handler(request):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise httpx.ReadError("connection closed by peer", request=request)
+            return httpx.Response(200, json={"served_by": request.url.host})
+
+        app = create_app(["http://a:3000"], upstream_transport=httpx.MockTransport(handler))
+        async with _client(app) as client:
+            response = await client.post("/analyzeArea", json={})
+        assert response.status_code == 200
+        assert app.state.gateway.backends[0].healthy
+        assert calls["n"] == 2
+
+    run(scenario())
+
+
+def test_the_gateway_expires_idle_connections_before_uvicorns_keep_alive_does():
+    from app.gateway import UPSTREAM_KEEPALIVE_EXPIRY_S
+
+    assert UPSTREAM_KEEPALIVE_EXPIRY_S < 5  # uvicorn's default timeout_keep_alive
+
+
+def test_rechecks_health_before_refusing_when_every_backend_looks_down():
+    # Found while capturing telemetry: right after startup the gateway had
+    # marked both instances down (they were still loading) and refused
+    # every analysis with 503 until the next 5 s health check, though both
+    # were up by then.
+    async def scenario():
+        transport = httpx.MockTransport(_backend_handler())
+        app = create_app(["http://a:3000", "http://b:3000"], upstream_transport=transport)
+        for backend in app.state.gateway.backends:
+            backend.healthy = False  # stale view from before they started
+        async with _client(app) as client:
+            response = await client.post("/analyzeArea", json={})
+        assert response.status_code == 200
+
+    run(scenario())

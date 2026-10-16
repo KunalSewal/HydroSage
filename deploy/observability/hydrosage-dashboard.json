@@ -1,0 +1,84 @@
+{
+  "uid": "hydrosage",
+  "title": "HydroSage — service overview",
+  "description": "OpenTelemetry metrics from the HydroSage gateway and analysis instances (D-016).",
+  "tags": ["hydrosage", "opentelemetry"],
+  "timezone": "browser",
+  "refresh": "10s",
+  "time": { "from": "now-30m", "to": "now" },
+  "schemaVersion": 39,
+  "panels": [
+    {
+      "type": "timeseries", "title": "Analyses per minute, by outcome",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 15 } } },
+      "targets": [{ "refId": "A", "legendFormat": "{{analysis_kind}} · {{analysis_outcome}}",
+        "expr": "sum by (analysis_kind, analysis_outcome) (rate(hydrosage_analysis_duration_seconds_count[1m])) * 60" }]
+    },
+    {
+      "type": "timeseries", "title": "Analysis latency (p50 / p95)",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [
+        { "refId": "A", "legendFormat": "p50",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(hydrosage_analysis_duration_seconds_bucket{analysis_outcome=\"ok\"}[2m])))" },
+        { "refId": "B", "legendFormat": "p95",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(hydrosage_analysis_duration_seconds_bucket{analysis_outcome=\"ok\"}[2m])))" }
+      ]
+    },
+    {
+      "type": "timeseries", "title": "Gateway: queued and in flight per instance",
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0 } },
+      "targets": [
+        { "refId": "A", "legendFormat": "queued at gateway", "expr": "max(hydrosage_gateway_queued)" },
+        { "refId": "B", "legendFormat": "in flight · {{hydrosage_backend}}", "expr": "max by (hydrosage_backend) (hydrosage_gateway_backend_in_flight)" }
+      ]
+    },
+    {
+      "type": "timeseries", "title": "Gateway dispatches per minute, by outcome",
+      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "bars", "fillOpacity": 60 } } },
+      "targets": [{ "refId": "A", "legendFormat": "{{outcome}}",
+        "expr": "sum by (outcome) (increase(hydrosage_gateway_dispatches_total[1m]))" }]
+    },
+    {
+      "type": "bargauge", "title": "Cache hit ratio (last 30 min)",
+      "gridPos": { "x": 0, "y": 16, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "options": { "orientation": "horizontal", "displayMode": "gradient" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 } },
+      "targets": [{ "refId": "A", "legendFormat": "{{cache}}", "instant": true,
+        "expr": "sum by (cache) (increase(hydrosage_cache_lookups_total{result=\"hit\"}[30m])) / sum by (cache) (increase(hydrosage_cache_lookups_total[30m]))" }]
+    },
+    {
+      "type": "piechart", "title": "Rainfall answers by source (last 30 min)",
+      "gridPos": { "x": 8, "y": 16, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "values": ["value"] } },
+      "targets": [{ "refId": "A", "legendFormat": "{{source}}", "instant": true,
+        "expr": "sum by (source) (increase(hydrosage_rainfall_lookups_total[30m]))" }]
+    },
+    {
+      "type": "timeseries", "title": "Process memory (512 MB cap on the lab containers)",
+      "gridPos": { "x": 16, "y": 16, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "bytes", "max": 536870912,
+        "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 536870912 } ] },
+        "custom": { "thresholdsStyle": { "mode": "line" } } } },
+      "targets": [{ "refId": "A", "legendFormat": "{{instance}}", "expr": "max by (instance) (process_memory_usage_bytes{service_name=~\"hydrosage-(api|gateway)\"})" }]
+    },
+    {
+      "type": "timeseries", "title": "End-user latency at the gateway: p95 by route",
+      "gridPos": { "x": 0, "y": 24, "w": 24, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ms" } },
+      "targets": [{ "refId": "A", "legendFormat": "{{http_method}} {{http_target}}",
+        "expr": "histogram_quantile(0.95, sum by (le, http_method, http_target) (rate(http_server_duration_milliseconds_bucket{service_name=\"hydrosage-gateway\", http_target!~\"/assets/.*\"}[5m])))" }]
+    }
+  ]
+}

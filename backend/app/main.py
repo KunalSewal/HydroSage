@@ -12,8 +12,10 @@ from app.api import (
     villages,
 )
 from app.core.config import get_settings
+from app.core.telemetry import instrument_fastapi, setup_telemetry
 
 settings = get_settings()
+setup_telemetry("hydrosage-api", extra_log_loggers=("uvicorn.access",))
 
 app = FastAPI(
     title=settings.app_name,
@@ -42,6 +44,7 @@ app.include_router(report.router)
 app.include_router(geocode.router)
 app.include_router(analyze_contour.router)
 app.include_router(analyze_area.router)
+instrument_fastapi(app)
 
 
 @app.get("/health", tags=["health"])

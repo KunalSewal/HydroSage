@@ -42,15 +42,42 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import httpx
+from opentelemetry import metrics, trace
+from opentelemetry.instrumentation.utils import suppress_http_instrumentation
+from opentelemetry.metrics import Observation
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
+from app.core.telemetry import setup_telemetry, wrap_asgi
+
 logger = logging.getLogger("hydrosage.gateway")
 
+# Gateway-side telemetry (D-016): no-ops unless setup_telemetry ran.
+_tracer = trace.get_tracer("hydrosage.gateway")
+_meter = metrics.get_meter("hydrosage.gateway")
+_queue_wait = _meter.create_histogram(
+    "hydrosage.gateway.queue_wait",
+    unit="s",
+    description="Time an analysis waited at the gateway for a free instance",
+)
+_dispatches = _meter.create_counter(
+    "hydrosage.gateway.dispatches",
+    description="Analyses handled by the gateway, by outcome (served, refused, unreachable, failed)",
+)
+
 ANALYSIS_PATHS = ("/analyzeArea", "/analyzeContour")
+
+# Idle pooled connections to the instances are dropped after this long --
+# deliberately shorter than uvicorn's 5 s keep-alive timeout. With equal
+# timeouts the gateway would sometimes reuse a connection at the moment the
+# server closed it, and the request failed with ReadError (seen in traces
+# during a load test, D-016).
+UPSTREAM_KEEPALIVE_EXPIRY_S = 2.0
+# A connection that drops mid-request this way is retried once.
+_DROPPED_CONNECTION = (httpx.ReadError, httpx.WriteError, httpx.RemoteProtocolError)
 LIGHT_PATHS = ("/geocode", "/docs", "/openapi.json")
 
 # Headers that describe one hop's connection, not the message, and so must
@@ -59,6 +86,16 @@ _HOP_BY_HOP = {
     "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te",
     "trailers", "transfer-encoding", "upgrade", "host", "content-length",
 }
+
+
+def _dispatch_outcome(status: int) -> str:
+    if status == 200:
+        return "served"
+    if status == 503:
+        return "refused"  # back-pressure: queue full or no healthy instance
+    if status == 502:
+        return "unreachable"
+    return "rejected" if status < 500 else "failed"  # 4xx: bad input, relayed from the instance
 
 
 @dataclass
@@ -171,23 +208,48 @@ class Gateway:
         return Response(upstream.content, status_code=upstream.status_code, headers=headers)
 
     async def forward_analysis(self, request: Request) -> Response:
+        # One span per dispatched analysis, a child of the request's server
+        # span and the parent of the outgoing call to the chosen instance --
+        # so a trace shows how long the request queued here, where it went,
+        # and whether it had to be retried elsewhere.
+        with _tracer.start_as_current_span("gateway.dispatch") as span:
+            span.set_attribute("hydrosage.gateway.queued_at_entry", len(self._waiters))
+            response = await self._forward_analysis(request, span)
+            outcome = _dispatch_outcome(response.status_code)
+            span.set_attribute("hydrosage.gateway.outcome", outcome)
+            _dispatches.add(1, {"outcome": outcome})
+            return response
+
+    async def _forward_analysis(self, request: Request, span: trace.Span) -> Response:
         started = time.perf_counter()
         body = await request.body()
         if len(body) > self.max_body_bytes:
             return JSONResponse({"detail": "upload too large"}, status_code=413)
 
+        if not any(b.healthy for b in self.backends):
+            # Every instance looks down -- most likely a stale view (e.g.
+            # checked while they were still starting). Look again before
+            # refusing, rather than failing until the next periodic check.
+            await self.check_health()
+
         tried: set[str] = set()
+        retried_dropped = False
         while len(tried) < len(self.backends):
             backend = await self._claim_slot(exclude=tried, affinity_key=request.url.path.encode() + body)
+            waited = time.perf_counter() - started
+            _queue_wait.record(waited)
+            span.set_attribute("hydrosage.gateway.queue_wait_ms", round(waited * 1000, 1))
             if backend is None:
                 if tried and not any(b.healthy for b in self.backends):
                     break  # every backend just refused; say so rather than "busy"
                 self.refused += 1
+                logger.warning("refused an analysis: queue full or no healthy instance (%d queued)", len(self._waiters))
                 return JSONResponse(
                     {"detail": "all analysis servers are busy; please retry shortly"},
                     status_code=503,
                     headers={"Retry-After": "15"},
                 )
+            span.set_attributes({"hydrosage.gateway.backend": backend.label, "hydrosage.gateway.attempts": len(tried) + 1})
             try:
                 upstream = await self._send(backend, request, body)
             except (httpx.ConnectError, httpx.ConnectTimeout) as error:
@@ -195,6 +257,14 @@ class Gateway:
                 # safe to try the next one.
                 self._mark_down(backend, error)
                 tried.add(backend.url)
+                continue
+            except _DROPPED_CONNECTION as error:
+                # The instance is alive -- the connection was stale. An
+                # analysis is a pure computation, so sending it again is safe.
+                if retried_dropped:
+                    return JSONResponse({"detail": f"analysis server failed: {error}"}, status_code=502)
+                retried_dropped = True
+                span.add_event("retry after dropped connection", {"exception.type": type(error).__name__})
                 continue
             except httpx.HTTPError as error:
                 self._mark_down(backend, error)
@@ -228,7 +298,10 @@ class Gateway:
     async def check_health(self) -> None:
         async def probe(backend: Backend) -> None:
             try:
-                response = await self.client.get(backend.url + "/health", timeout=5.0)
+                # Not traced: probes run every 5 s per instance and would
+                # each be a separate trace, burying the real requests.
+                with suppress_http_instrumentation():
+                    response = await self.client.get(backend.url + "/health", timeout=5.0)
                 ok = response.status_code == 200
             except (httpx.ConnectError, httpx.ConnectTimeout) as error:
                 ok = False
@@ -285,7 +358,11 @@ def create_app(
 
     gateway = Gateway(
         backends=[Backend(url.rstrip("/")) for url in backend_urls],
-        client=httpx.AsyncClient(transport=upstream_transport, timeout=upstream_timeout),
+        client=httpx.AsyncClient(
+            transport=upstream_transport,
+            timeout=upstream_timeout,
+            limits=httpx.Limits(keepalive_expiry=UPSTREAM_KEEPALIVE_EXPIRY_S),
+        ),
         per_backend_limit=per_backend_limit,
         max_queue=max_queue,
         queue_timeout=queue_timeout,
@@ -323,18 +400,50 @@ def create_app(
     return app
 
 
-def _app_from_env() -> Starlette | None:
+def _register_fleet_gauges(gateway: Gateway) -> None:
+    """Live view of the fleet as the gateway sees it: queue depth, and each
+    instance's in-flight count and health."""
+
+    def per_backend(value):
+        return lambda options: [
+            Observation(value(b), {"hydrosage.backend": b.label}) for b in gateway.backends
+        ]
+
+    _meter.create_observable_gauge(
+        "hydrosage.gateway.queued",
+        callbacks=[lambda options: [Observation(len(gateway._waiters))]],
+        description="Analyses waiting at the gateway for a free instance",
+    )
+    _meter.create_observable_gauge(
+        "hydrosage.gateway.backend.in_flight",
+        callbacks=[per_backend(lambda b: b.in_flight)],
+        description="Analyses the gateway has in flight on each instance",
+    )
+    _meter.create_observable_gauge(
+        "hydrosage.gateway.backend.healthy",
+        callbacks=[per_backend(lambda b: 1 if b.healthy else 0)],
+        description="1 while the gateway considers an instance healthy, else 0",
+    )
+
+
+def _app_from_env():
     backends = [u.strip() for u in os.environ.get("GATEWAY_BACKENDS", "").split(",") if u.strip()]
     if not backends:
         return None  # imported for tests/tools; `uvicorn app.gateway:app` needs GATEWAY_BACKENDS
+    # Before create_app, so the gateway's httpx client is instrumented and
+    # carries the trace to the instances. No-op without an OTLP endpoint.
+    telemetry_on = setup_telemetry("hydrosage-gateway")
     static = os.environ.get("GATEWAY_STATIC_DIR")
-    return create_app(
+    app = create_app(
         backends,
         static_dir=Path(static) if static else None,
         per_backend_limit=int(os.environ.get("GATEWAY_PER_BACKEND_LIMIT", "1")),
         max_queue=int(os.environ.get("GATEWAY_MAX_QUEUE", "20")),
         queue_timeout=float(os.environ.get("GATEWAY_QUEUE_TIMEOUT", "120")),
     )
+    if telemetry_on:
+        _register_fleet_gauges(app.state.gateway)
+    return wrap_asgi(app)
 
 
 app = _app_from_env()

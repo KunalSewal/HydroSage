@@ -30,10 +30,13 @@ import signal
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from opentelemetry.metrics import Observation
 
 from app.api import analyze_area, analyze_contour, geocode
 from app.core.analysis_gate import AnalysisGate
 from app.core.config import get_settings
+from app.core.metrics import analyses_refused, meter
+from app.core.telemetry import instrument_fastapi, setup_telemetry
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +53,10 @@ if not logger.handlers:
     logger.propagate = False
 
 settings = get_settings()
+
+# Before the app exists, so its routes are instrumented and startup logs
+# are exported. A no-op unless OTEL_EXPORTER_OTLP_ENDPOINT is set (D-016).
+setup_telemetry("hydrosage-api", extra_log_loggers=(__name__, "uvicorn.access"))
 
 
 def _load_malloc_trim():
@@ -104,6 +111,19 @@ _gate = AnalysisGate(
 )
 _GATE_WAIT_SECONDS = float(os.environ.get("ANALYSIS_WAIT_SECONDS", "60"))
 
+# The gate's load as live gauges: how close this 512 MB process is to
+# refusing work.
+meter.create_observable_gauge(
+    "hydrosage.analysis.in_flight",
+    callbacks=[lambda options: [Observation(_gate.in_flight)]],
+    description="Analyses running in this process (limit 1 on the lab containers)",
+)
+meter.create_observable_gauge(
+    "hydrosage.analysis.waiting",
+    callbacks=[lambda options: [Observation(_gate.waiting)]],
+    description="Analyses waiting for this process's gate",
+)
+
 
 def _rss_mb() -> float | None:
     """Resident set size in MB, read from /proc. None off Linux."""
@@ -132,6 +152,7 @@ app.add_middleware(
 app.include_router(analyze_contour.router)
 app.include_router(analyze_area.router)
 app.include_router(geocode.router)
+instrument_fastapi(app)
 
 
 @app.on_event("startup")
@@ -182,6 +203,8 @@ async def release_memory_after_request(request: Request, call_next):
         return await call_next(request)
 
     if not await _gate.acquire(timeout=_GATE_WAIT_SECONDS):
+        analyses_refused.add(1, {"http.route": request.url.path})
+        logger.warning("refused %s: analysis gate full", request.url.path)
         return JSONResponse(
             status_code=503,
             content={"detail": "server is busy with other analyses; please retry shortly"},

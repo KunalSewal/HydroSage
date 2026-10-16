@@ -27,6 +27,7 @@ from dataclasses import asdict
 import redis
 
 from app.core.config import Settings
+from app.core.metrics import record_cache
 from app.domain.catchment import CatchmentResult
 
 logger = logging.getLogger(__name__)
@@ -118,6 +119,7 @@ class CatchmentCache:
         to depend on domain/ at import time beyond the CatchmentResult
         shape itself."""
         cached = self.get(village_id)
+        record_cache("catchment", cached is not None)
         if cached is not None:
             return cached
         result = compute()

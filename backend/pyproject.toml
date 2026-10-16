@@ -23,6 +23,15 @@ dependencies = [
     "pysheds>=0.4",
     "pillow>=10.4",
     "python-multipart>=0.0.12",
+    # Observability (D-016). Loaded only when OTEL_EXPORTER_OTLP_ENDPOINT is
+    # set, so a deployment with telemetry off pays no memory for it.
+    "opentelemetry-api>=1.45",
+    "opentelemetry-sdk>=1.45",
+    "opentelemetry-exporter-otlp-proto-http>=1.45",
+    "opentelemetry-instrumentation-asgi>=0.66b0",
+    "opentelemetry-instrumentation-fastapi>=0.66b0",
+    "opentelemetry-instrumentation-httpx>=0.66b0",
+    "opentelemetry-instrumentation-system-metrics>=0.66b0",
 ]
 
 [project.optional-dependencies]

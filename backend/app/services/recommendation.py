@@ -18,7 +18,12 @@ endpoint's own inline client-then-domain-function calls).
 """
 
 import logging
+import threading
+import time
 
+from opentelemetry import trace
+
+from app.core.metrics import record_cache, tracer
 from app.core.ttl_cache import TTLCache
 from app.domain.land_availability import estimate_available_land
 from app.domain.pond import capture_ratio, size_pond_options
@@ -36,21 +41,65 @@ logger = logging.getLogger(__name__)
 _land_cache = TTLCache(ttl_seconds=6 * 3600, max_entries=512)
 
 
+
+class _CircuitBreaker:
+    """Stops calling a failing external service for a cooldown period.
+
+    Found from traces (D-016): with Overpass down, every analysis spent
+    ~20 s in land_use.lookup on the same timeout and the gateway queue
+    backed up. Remembering failures per area still cost one timeout per new
+    area per instance every few minutes; one failure now opens the breaker
+    for the whole service, and the next call after the cooldown tries
+    again."""
+
+    def __init__(self, cooldown_seconds: float) -> None:
+        self._cooldown = cooldown_seconds
+        self._open_until = 0.0
+        self._lock = threading.Lock()
+
+    def is_open(self) -> bool:
+        with self._lock:
+            return time.monotonic() < self._open_until
+
+    def record_failure(self) -> None:
+        with self._lock:
+            self._open_until = time.monotonic() + self._cooldown
+
+    def reset(self) -> None:
+        with self._lock:
+            self._open_until = 0.0
+
+
+_land_breaker = _CircuitBreaker(cooldown_seconds=300)
+
+
 def _get_available_land_hectares(bbox: BoundingBox) -> float | None:
     """Land availability comes from a public, best-effort community API
     (Overpass) that isn't always reliable -- it shouldn't be able to fail
     the whole recommendation over an availability check the brief itself
     treats as a "checked against" refinement, not the core deliverable."""
+    with tracer.start_as_current_span("land_use.lookup") as span:
+        available_m2 = _available_land_m2(bbox)
+        span.set_attribute("hydrosage.land.available_hectares", round(available_m2 / 10_000, 2) if available_m2 is not None else -1)
+        return available_m2
+
+
+def _available_land_m2(bbox: BoundingBox) -> float | None:
     key = tuple(round(v, 5) for v in (bbox.min_lon, bbox.min_lat, bbox.max_lon, bbox.max_lat))
     cached = _land_cache.get(key)
+    record_cache("land_use", cached is not None)
     if cached is not None:
         return cached
+    if _land_breaker.is_open():
+        trace.get_current_span().set_attribute("hydrosage.land.skipped", "circuit open")
+        return None
 
     land_use_client = LandUseClient()
     try:
         excluded = land_use_client.get_excluded_features(bbox)
     except Exception:  # noqa: BLE001 -- see docstring
         logger.warning("land-availability lookup failed; recommending without a land check", exc_info=True)
+        _land_breaker.record_failure()
         return None
     finally:
         land_use_client.close()
@@ -60,6 +109,19 @@ def _get_available_land_hectares(bbox: BoundingBox) -> float | None:
 
 
 def compute_recommendation_fields(
+    lat: float,
+    lon: float,
+    bbox: BoundingBox,
+    catchment_area_m2: float,
+    achievable_volume_m3_by_depth: dict[float, float],
+) -> RecommendationFieldsOut:
+    with tracer.start_as_current_span("recommendation.compute") as span:
+        fields = _compute_recommendation_fields(lat, lon, bbox, catchment_area_m2, achievable_volume_m3_by_depth)
+        span.set_attribute("hydrosage.pond.options", len(fields.pond_options))
+        return fields
+
+
+def _compute_recommendation_fields(
     lat: float,
     lon: float,
     bbox: BoundingBox,

@@ -3,6 +3,7 @@
 import httpx
 
 from app.core.config import get_settings
+from app.infrastructure.http import shared_ssl_context
 
 
 class GeocodingClient:
@@ -12,6 +13,7 @@ class GeocodingClient:
             base_url=settings.nominatim_base_url,
             timeout=15.0,
             headers={"User-Agent": settings.nominatim_user_agent},
+            verify=shared_ssl_context(),
         )
 
     def search(self, query: str, limit: int = 5) -> list[dict]:

@@ -6,6 +6,7 @@ import httpx
 from fastapi import APIRouter, HTTPException
 
 from app.core.config import get_settings
+from app.core.metrics import timed_analysis, tracer
 from app.domain.area import analysis_bbox_for, polygon_area_m2, rasterize_polygon, validate_area
 from app.domain.catchment import analyze_catchment
 from app.domain.terrain import generate_contours
@@ -31,52 +32,91 @@ def _polygon_key(polygon: list[list[float]]) -> str:
 def analyze_area(payload: AreaAnalysisIn):
     """Pond site, catchment, and expected water volume for a land area
     drawn on the map. The pond is sited inside the drawn polygon; its
-    catchment may extend uphill beyond it (see domain/area.py)."""
-    polygon = payload.polygon
-    try:
-        validate_area(polygon)
-    except ValueError as error:
-        raise HTTPException(status_code=422, detail=str(error))
+    catchment may extend uphill beyond it (see domain/area.py).
 
-    key = _polygon_key(polygon)
-    requested_bbox = analysis_bbox_for(polygon)
+    Each stage is its own span (app/core/metrics.py), so a trace shows
+    where the time went: the elevation download, D8 routing, contouring,
+    or the rainfall and land-use lookups."""
+    with timed_analysis("area") as span:
+        polygon = payload.polygon
+        try:
+            validate_area(polygon)
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error))
 
-    elevation_client = ElevationClient()
-    try:
-        # Keyed by the drawn shape, so re-analyzing the same area never
-        # spends another call from OpenTopography's 50-per-day quota.
-        mosaic, covered = elevation_client.get_dem_for_bbox(requested_bbox, cache_key=key)
-    except httpx.HTTPError as error:
-        logger.warning("elevation fetch failed for drawn area", exc_info=True)
-        raise HTTPException(status_code=502, detail=f"elevation service unavailable: {error}")
-    finally:
-        elevation_client.close()
+        area_ha = polygon_area_m2(polygon) / 10_000
+        key = _polygon_key(polygon)
+        span.set_attributes({"hydrosage.area.hectares": round(area_ha, 2), "hydrosage.area.key": key})
+        requested_bbox = analysis_bbox_for(polygon)
 
-    site_mask = rasterize_polygon(polygon, covered, mosaic.shape)
+        elevation_client = ElevationClient()
+        try:
+            # Keyed by the drawn shape, so re-analyzing the same area never
+            # spends another call from OpenTopography's 50-per-day quota.
+            mosaic, covered = elevation_client.get_dem_for_bbox(requested_bbox, cache_key=key)
+        except httpx.HTTPError as error:
+            logger.warning("elevation fetch failed for drawn area", exc_info=True)
+            raise HTTPException(status_code=502, detail=f"elevation service unavailable: {error}")
+        finally:
+            elevation_client.close()
 
-    catchment_cache = CatchmentCache.from_settings(get_settings())
-    try:
-        catchment = catchment_cache.get_or_compute(
-            key, lambda: analyze_catchment(mosaic, covered, site_mask=site_mask)
+        with tracer.start_as_current_span("area.rasterize"):
+            site_mask = rasterize_polygon(polygon, covered, mosaic.shape)
+
+        catchment_cache = CatchmentCache.from_settings(get_settings())
+        with tracer.start_as_current_span("catchment.analyze") as catchment_span:
+            catchment_span.set_attribute("hydrosage.grid.cells", int(mosaic.size))
+            try:
+                catchment = catchment_cache.get_or_compute(
+                    key, lambda: analyze_catchment(mosaic, covered, site_mask=site_mask)
+                )
+            except ValueError as error:
+                raise HTTPException(status_code=422, detail=str(error))
+            catchment_span.set_attribute("hydrosage.catchment.hectares", round(catchment.catchment_area_m2 / 10_000, 3))
+
+        with tracer.start_as_current_span("contours.generate") as contour_span:
+            contours = generate_contours(mosaic, covered)
+            contour_span.set_attribute("hydrosage.contours.lines", len(contours))
+
+        # Rainfall and land use are looked up for the drawn area itself, not
+        # the padded analysis extent around it.
+        lons = [p[0] for p in polygon]
+        lats = [p[1] for p in polygon]
+        polygon_bbox = BoundingBox(min_lon=min(lons), min_lat=min(lats), max_lon=max(lons), max_lat=max(lats))
+        recommendation_fields = compute_recommendation_fields(
+            (polygon_bbox.min_lat + polygon_bbox.max_lat) / 2,
+            (polygon_bbox.min_lon + polygon_bbox.max_lon) / 2,
+            polygon_bbox,
+            catchment.catchment_area_m2,
+            catchment.achievable_volume_m3_by_depth,
         )
-    except ValueError as error:
-        raise HTTPException(status_code=422, detail=str(error))
 
-    contours = generate_contours(mosaic, covered)
+        span.set_attributes(
+            {
+                "hydrosage.pond.lat": catchment.pond_lat,
+                "hydrosage.pond.lon": catchment.pond_lon,
+                "hydrosage.catchment.hectares": round(catchment.catchment_area_m2 / 10_000, 3),
+                "hydrosage.runoff.m3_per_year": round(recommendation_fields.runoff_volume_m3 or 0.0, 1),
+                "hydrosage.rainfall.source": recommendation_fields.rainfall_source or "none",
+            }
+        )
+        logger.info(
+            "area analysis complete: %.1f ha area, %.2f ha catchment, %s m3/yr",
+            area_ha,
+            catchment.catchment_area_m2 / 10_000,
+            round(recommendation_fields.runoff_volume_m3) if recommendation_fields.runoff_volume_m3 else "unknown",
+            extra={
+                "hydrosage.area.hectares": round(area_ha, 2),
+                "hydrosage.catchment.hectares": round(catchment.catchment_area_m2 / 10_000, 3),
+                "hydrosage.rainfall.source": recommendation_fields.rainfall_source or "none",
+            },
+        )
 
-    # Rainfall and land use are looked up for the drawn area itself, not
-    # the padded analysis extent around it.
-    lons = [p[0] for p in polygon]
-    lats = [p[1] for p in polygon]
-    polygon_bbox = BoundingBox(min_lon=min(lons), min_lat=min(lats), max_lon=max(lons), max_lat=max(lats))
-    recommendation_fields = compute_recommendation_fields(
-        (polygon_bbox.min_lat + polygon_bbox.max_lat) / 2,
-        (polygon_bbox.min_lon + polygon_bbox.max_lon) / 2,
-        polygon_bbox,
-        catchment.catchment_area_m2,
-        catchment.achievable_volume_m3_by_depth,
-    )
+        with tracer.start_as_current_span("response.build"):
+            return _build_response(catchment, recommendation_fields, covered, mosaic, contours, polygon, area_ha)
 
+
+def _build_response(catchment, recommendation_fields, covered, mosaic, contours, polygon, area_ha) -> AreaAnalysisOut:
     return AreaAnalysisOut(
         **catchment_fields(catchment).model_dump(),
         **recommendation_fields.model_dump(),
@@ -88,5 +128,5 @@ def analyze_area(payload: AreaAnalysisIn):
         max_elevation=float(mosaic.max()),
         contours=[{"elevation": c["elevation"], "coordinates": c["coordinates"]} for c in contours],
         selected_area=[[p[0], p[1]] for p in polygon],
-        selected_area_hectares=polygon_area_m2(polygon) / 10_000,
+        selected_area_hectares=area_ha,
     )

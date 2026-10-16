@@ -16,6 +16,7 @@ import logging
 from collections.abc import Callable
 from datetime import date
 
+from app.core.metrics import rainfall_lookups, record_cache, tracer
 from app.core.ttl_cache import TTLCache
 from app.domain.rainfall import RainfallSummary, summarize_climatology, summarize_rainfall
 from app.infrastructure.nasa_power_client import (
@@ -63,8 +64,20 @@ def get_rainfall_summary(
     fallback: Callable[[], NasaPowerClient] = NasaPowerClient,
 ) -> tuple[RainfallSummary, str] | None:
     """(summary, source name), or None if every source failed."""
+    with tracer.start_as_current_span("rainfall.lookup") as span:
+        result = _lookup(lat, lon, primary, fallback)
+        source = result[1] if result is not None else "none"
+        span.set_attribute("hydrosage.rainfall.source", source)
+        if result is not None:
+            span.set_attribute("hydrosage.rainfall.mm_per_year", round(result[0].average_annual_mm, 1))
+        rainfall_lookups.add(1, {"source": source})
+        return result
+
+
+def _lookup(lat, lon, primary, fallback) -> tuple[RainfallSummary, str] | None:
     key = _cache_key(lat, lon)
     cached = _cache.get(key)
+    record_cache("rainfall", cached is not None)
     if cached is not None:
         return cached
 

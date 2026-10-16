@@ -17,6 +17,7 @@ import httpx
 
 from app.core.config import get_settings
 from app.infrastructure.elevation_client import BoundingBox
+from app.infrastructure.http import shared_ssl_context
 
 _QUERY_TEMPLATE = """
 [out:json][timeout:25];
@@ -52,6 +53,7 @@ class LandUseClient:
             base_url=settings.overpass_base_url,
             timeout=settings.land_use_timeout_seconds,
             headers={"User-Agent": settings.nominatim_user_agent},
+            verify=shared_ssl_context(),
         )
 
     def get_excluded_features(self, bbox: BoundingBox) -> list[ExcludedFeature]:

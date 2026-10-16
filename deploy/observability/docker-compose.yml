@@ -1,0 +1,23 @@
+# Observability backend for HydroSage's OpenTelemetry data (D-016,
+# docs/OBSERVABILITY.md). One container, grafana/otel-lgtm, bundling:
+#   - an OpenTelemetry Collector receiving OTLP on 4317 (gRPC) / 4318 (HTTP)
+#   - Tempo (traces), Prometheus (metrics), Loki (logs)
+#   - Grafana on http://localhost:3000 (admin / admin) to explore all three
+#
+#   docker compose -f deploy/observability/docker-compose.yml up -d
+#
+# The app exports to it when OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+# (deploy/demo_local.ps1 -Telemetry sets that up).
+services:
+  lgtm:
+    image: grafana/otel-lgtm:latest
+    ports:
+      - "3000:3000"   # Grafana
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+    environment:
+      # Open Grafana without a login: a local inspection stack only, never
+      # exposed beyond this machine.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
+    restart: unless-stopped
